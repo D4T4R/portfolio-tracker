@@ -1,0 +1,119 @@
+.portfolio {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.portfolio h2 {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.8rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  padding: 1rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.stat:hover {
+  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.statValue {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.statLabel {
+  font-size: 0.9rem;
+  opacity: 0.8;
+  font-weight: 500;
+}
+
+.stat.gainers .statValue {
+  color: #4ade80;
+}
+
+.stat.losers .statValue {
+  color: #f87171;
+}
+
+.overallChange {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.changeValue {
+  font-size: 1.3rem;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  display: inline-block;
+}
+
+.changeValue.positive {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.changeValue.negative {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.lastUpdated {
+  text-align: center;
+  font-size: 0.85rem;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .portfolio {
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .portfolio h2 {
+    font-size: 1.5rem;
+  }
+  
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+  }
+  
+  .stat {
+    padding: 0.75rem;
+  }
+  
+  .statValue {
+    font-size: 1.5rem;
+  }
+  
+  .changeValue {
+    font-size: 1.1rem;
+    padding: 0.5rem 1rem;
+  }
+}
