@@ -243,6 +243,7 @@ Project Deployed temporarily on [Vercel](https://portfolio-tracker-9t9o.vercel.a
 
 <img width="1912" height="1038" alt="image" src="https://github.com/user-attachments/assets/afe4f281-ae11-4211-9d13-cf94c23c739a" />
 <img width="1912" height="1038" alt="image" src="https://github.com/user-attachments/assets/73da9b87-6a9f-49df-a50a-ff843885f165" />
+<img width="1879" height="988" alt="image" src="https://github.com/user-attachments/assets/98b47060-11aa-4328-b8f0-268d7b4ef96d" />
 
 
 
