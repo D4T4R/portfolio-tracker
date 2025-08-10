@@ -192,6 +192,7 @@ export default function Home() {
                       name={name} 
                       data={data}
                       portfolioData={stockPortfolioData} // Pass portfolio data if available
+                      totalPortfolioValue={portfolioData?.summary?.totalCurrentValue} // Pass total portfolio value
                     />
                   )
                 })}
@@ -229,6 +230,7 @@ export default function Home() {
                                 symbol: stock.symbol
                               }}
                               portfolioData={stock}
+                              totalPortfolioValue={portfolioData?.summary?.totalCurrentValue}
                             />
                           ))
                         }

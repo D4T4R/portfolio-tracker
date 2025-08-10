@@ -18,7 +18,7 @@ import { FaChartLine } from 'react-icons/fa'
 import { useRouter } from 'next/router'
 import { useState } from 'react'
 
-export default function StockCard({ name, data, portfolioData = null }) {
+export default function StockCard({ name, data, portfolioData = null, totalPortfolioValue = null }) {
   const isPositive = data.change >= 0
   const changeColor = isPositive ? 'green.400' : 'red.400'
   const router = useRouter()
@@ -44,21 +44,15 @@ export default function StockCard({ name, data, portfolioData = null }) {
 
   const handleChartClick = (e) => {
     e.stopPropagation()
-    // Check if user prefers internal charts or TradingView
-    // For now, we'll provide both options via a context menu or use TradingView by default
-    
-    // Open internal chart page as default
-    const chartUrl = `/chart/${data.symbol}`
-    window.open(chartUrl, '_blank')
-  }
-
-  const handleTradingViewClick = (e) => {
-    e.stopPropagation()
-    // Open TradingView chart in new tab
+    // Open TradingView chart in new tab with default 1D timeframe
     const symbol = data.symbol.replace('.NS', '')
     const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=NSE%3A${symbol}&interval=1D`
     window.open(tradingViewUrl, '_blank')
   }
+
+  // Calculate portfolio percentage if data exists and totalPortfolioValue is available
+  const portfolioPercentage = portfolioData && totalPortfolioValue ? 
+    (((portfolioData.currentValue || portfolioData.netValue || 0) / totalPortfolioValue) * 100).toFixed(1) : null
   
   return (
     <Box
@@ -154,50 +148,72 @@ export default function StockCard({ name, data, portfolioData = null }) {
 
         {/* Portfolio Information (if available) */}
         {portfolioData && (
-          <Box 
-            bg={useColorModeValue('gray.100', 'gray.700')} 
-            p={4} 
-            borderRadius="md"
-            mt={2}
-          >
-            <VStack spacing={2} align="stretch">
-              <HStack justify="space-between">
-                <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')} fontWeight="medium">
-                  Holdings
-                </Text>
-                <Text fontSize="sm" fontWeight="bold" color={useColorModeValue('gray.800', 'white')}>
-                  {portfolioData.quantity} shares
-                </Text>
-              </HStack>
-              
-              <HStack justify="space-between">
-                <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')} fontWeight="medium">
-                  Current Value
-                </Text>
-                <Text fontSize="sm" fontWeight="bold" color={useColorModeValue('gray.800', 'white')}>
-                  ₹{portfolioData.currentValue?.toLocaleString() || '0'}
-                </Text>
-              </HStack>
-              
-              <HStack justify="space-between">
-                <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')} fontWeight="medium">
-                  P&L
-                </Text>
-                <Text 
-                  fontSize="sm" 
-                  fontWeight="bold" 
-                  color={portfolioData.totalProfit >= 0 ? 'green.500' : 'red.500'}
+          <>
+            {/* Portfolio percentage badge */}
+            {portfolioPercentage && (
+              <Box textAlign="center" mt={1}>
+                <Badge 
+                  colorScheme="purple" 
+                  variant="solid"
+                  px={3}
+                  py={1}
+                  borderRadius="full"
+                  fontSize="xs"
                 >
-                  {portfolioData.totalProfit >= 0 ? '+' : ''}₹{portfolioData.totalProfit?.toLocaleString() || '0'}
-                  {portfolioData.profitPercent !== undefined && (
-                    <Text as="span" ml={1}>
-                      ({portfolioData.profitPercent >= 0 ? '+' : ''}{portfolioData.profitPercent}%)
-                    </Text>
-                  )}
+                  {portfolioPercentage}% of portfolio
+                </Badge>
+              </Box>
+            )}
+            
+            <Box 
+              bg={useColorModeValue('gray.100', 'gray.700')} 
+              p={4} 
+              borderRadius="md"
+              mt={2}
+            >
+              <VStack spacing={2} align="stretch">
+                <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textAlign="center" fontWeight="semibold" textTransform="uppercase">
+                  Your Holdings
                 </Text>
-              </HStack>
-            </VStack>
-          </Box>
+                
+                <HStack justify="space-between">
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')} fontWeight="medium">
+                    Shares
+                  </Text>
+                  <Text fontSize="sm" fontWeight="bold" color={useColorModeValue('gray.800', 'white')}>
+                    {portfolioData.quantity || 0}
+                  </Text>
+                </HStack>
+                
+                <HStack justify="space-between">
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')} fontWeight="medium">
+                    Current Value
+                  </Text>
+                  <Text fontSize="sm" fontWeight="bold" color="blue.500">
+                    ₹{(portfolioData.currentValue || portfolioData.netValue || 0).toLocaleString()}
+                  </Text>
+                </HStack>
+                
+                <HStack justify="space-between">
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')} fontWeight="medium">
+                    P&L
+                  </Text>
+                  <Text 
+                    fontSize="sm" 
+                    fontWeight="bold" 
+                    color={portfolioData.totalProfit >= 0 ? 'green.500' : 'red.500'}
+                  >
+                    {portfolioData.totalProfit >= 0 ? '+' : ''}₹{(portfolioData.totalProfit || 0).toLocaleString()}
+                    {portfolioData.profitPercent !== undefined && (
+                      <Text as="span" ml={1}>
+                        ({portfolioData.profitPercent >= 0 ? '+' : ''}{portfolioData.profitPercent}%)
+                      </Text>
+                    )}
+                  </Text>
+                </HStack>
+              </VStack>
+            </Box>
+          </>
         )}
 
         {/* Click to view hint for portfolio cards */}
