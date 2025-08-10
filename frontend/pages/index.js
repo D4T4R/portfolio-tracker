@@ -24,6 +24,7 @@ import Navigation from '../components/Navigation'
 
 export default function Home() {
   const [stockData, setStockData] = useState(null)
+  const [portfolioData, setPortfolioData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [error, setError] = useState(null)
@@ -33,25 +34,32 @@ export default function Home() {
     try {
       setLoading(true)
       setError(null)
-      const response = await axios.get('http://localhost:5000/api/prices')
-      setStockData(response.data)
+      
+      // Fetch both stock prices and portfolio data
+      const [pricesResponse, portfolioResponse] = await Promise.all([
+        axios.get('http://localhost:5000/api/prices'),
+        axios.get('http://localhost:5000/api/portfolio-with-live-prices')
+      ])
+      
+      setStockData(pricesResponse.data)
+      setPortfolioData(portfolioResponse.data)
       setLastUpdated(new Date())
       
       if (lastUpdated) {
         toast({
           title: 'Data Updated',
-          description: 'Stock prices have been refreshed',
+          description: 'Stock prices and portfolio have been refreshed',
           status: 'success',
           duration: 2000,
           isClosable: true,
         })
       }
     } catch (err) {
-      setError('Failed to fetch stock data. Make sure the Flask backend is running on port 5000.')
-      console.error('Error fetching stock data:', err)
+      setError('Failed to fetch data. Make sure the Flask backend is running on port 5000.')
+      console.error('Error fetching data:', err)
       toast({
         title: 'Error',
-        description: 'Failed to fetch stock data',
+        description: 'Failed to fetch data',
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -162,12 +170,73 @@ export default function Home() {
           {/* Main Content */}
           {stockData && (
             <>
-              <Portfolio stockData={stockData} />
+              {/* Enhanced Portfolio Overview */}
+              {portfolioData && (
+                <Portfolio 
+                  stockData={stockData} 
+                  portfolioSummary={portfolioData.summary}
+                />
+              )}
+              
+              {/* Stock Cards with Portfolio Integration */}
               <SimpleGrid columns={{ base: 1, md: 2, lg: 3, xl: 4 }} spacing={6} w="full">
-                {Object.entries(stockData.prices).map(([name, data]) => (
-                  <StockCard key={name} name={name} data={data} />
-                ))}
+                {Object.entries(stockData.prices).map(([name, data]) => {
+                  // Find corresponding portfolio data for this stock
+                  const stockPortfolioData = portfolioData?.portfolioData?.find(
+                    stock => stock.stockName === name && stock.quantity > 0
+                  )
+                  
+                  return (
+                    <StockCard 
+                      key={name} 
+                      name={name} 
+                      data={data}
+                      portfolioData={stockPortfolioData} // Pass portfolio data if available
+                    />
+                  )
+                })}
               </SimpleGrid>
+              
+              {/* Portfolio-Only Stocks (not in live prices) */}
+              {portfolioData && (
+                <>
+                  {portfolioData.portfolioData
+                    .filter(stock => 
+                      stock.quantity > 0 && 
+                      !Object.keys(stockData.prices).includes(stock.stockName)
+                    ).length > 0 && (
+                    <VStack spacing={4} w="full" mt={8}>
+                      <Heading size="lg" color="white" textAlign="center">
+                        Other Portfolio Holdings
+                      </Heading>
+                      <Text color="gray.400" fontSize="sm" textAlign="center">
+                        Holdings not available in live price feed
+                      </Text>
+                      <SimpleGrid columns={{ base: 1, md: 2, lg: 3, xl: 4 }} spacing={6} w="full">
+                        {portfolioData.portfolioData
+                          .filter(stock => 
+                            stock.quantity > 0 && 
+                            !Object.keys(stockData.prices).includes(stock.stockName)
+                          )
+                          .map((stock) => (
+                            <StockCard 
+                              key={stock.stockName} 
+                              name={stock.stockName}
+                              data={{
+                                price: stock.currentPrice,
+                                change: 0,
+                                changePercent: 0,
+                                symbol: stock.symbol
+                              }}
+                              portfolioData={stock}
+                            />
+                          ))
+                        }
+                      </SimpleGrid>
+                    </VStack>
+                  )}
+                </>
+              )}
             </>
           )}
         </VStack>

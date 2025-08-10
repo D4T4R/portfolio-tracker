@@ -10,14 +10,19 @@
   "dependencies": {
     "@chakra-ui/icons": "^2.2.4",
     "@chakra-ui/react": "^2.8.0",
+    "@chakra-ui/theme-tools": "^2.2.9",
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
+    "@react-spring/web": "^10.0.1",
     "axios": "^1.5.0",
     "framer-motion": "^10.16.4",
+    "lucide-react": "^0.539.0",
     "next": "^13.4.19",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^4.11.0",
+    "react-intersection-observer": "^9.16.0",
+    "react-spring": "^10.0.1",
     "recharts": "^2.8.0"
   }
 }
