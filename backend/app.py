@@ -377,6 +377,47 @@ def get_portfolio_with_live_prices():
     except Exception as e:
         return jsonify({"error": f"Error processing portfolio data: {str(e)}"}), 500
 
+@app.route('/api/historical/<symbol>')
+def get_historical_data(symbol):
+    """Get historical price data for a stock"""
+    try:
+        # Default to 30 days of data
+        period = request.args.get('period', '1mo')  # Options: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
+        interval = request.args.get('interval', '1d')  # Options: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+        
+        ticker = Ticker(symbol)
+        history = ticker.history(period=period, interval=interval)
+        
+        if history is None or history.empty:
+            return jsonify({"error": "No historical data found"}), 404
+        
+        # Reset index to get date as a column
+        history = history.reset_index()
+        
+        # Convert to list of dictionaries for JSON response
+        chart_data = []
+        for _, row in history.iterrows():
+            chart_data.append({
+                "date": row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else "",
+                "open": round(float(row['open']), 2) if pd.notna(row['open']) else 0,
+                "high": round(float(row['high']), 2) if pd.notna(row['high']) else 0,
+                "low": round(float(row['low']), 2) if pd.notna(row['low']) else 0,
+                "close": round(float(row['close']), 2) if pd.notna(row['close']) else 0,
+                "volume": int(row['volume']) if pd.notna(row['volume']) else 0,
+                "price": round(float(row['close']), 2) if pd.notna(row['close']) else 0  # For chart compatibility
+            })
+        
+        return jsonify({
+            "symbol": symbol,
+            "period": period,
+            "interval": interval,
+            "data": chart_data,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Error fetching historical data: {str(e)}"}), 500
+
 if __name__ == "__main__":
     app.run(debug=True)
 

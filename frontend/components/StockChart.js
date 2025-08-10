@@ -10,30 +10,13 @@ import {
   Area,
   AreaChart
 } from 'recharts'
-import { Box, Text, useColorModeValue } from '@chakra-ui/react'
+import { Box, Text, useColorModeValue, Alert, AlertIcon } from '@chakra-ui/react'
+import axios from 'axios'
 
-// Mock data generator for demonstration
-const generateMockData = (symbol) => {
-  const basePrice = Math.random() * 1000 + 100 // Random base price between 100-1100
-  const data = []
-  const days = 30 // Last 30 days
-  
-  for (let i = days; i >= 0; i--) {
-    const date = new Date()
-    date.setDate(date.getDate() - i)
-    
-    // Generate somewhat realistic price movement
-    const change = (Math.random() - 0.5) * 20 // Random change between -10 to +10
-    const price = basePrice + (Math.sin(i / 5) * 50) + change
-    
-    data.push({
-      date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      price: Math.max(price, 10), // Ensure price doesn't go below 10
-      volume: Math.floor(Math.random() * 1000000) + 100000
-    })
-  }
-  
-  return data
+// Function to format date for display
+const formatDate = (dateString) => {
+  const date = new Date(dateString)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 const CustomTooltip = ({ active, payload, label }) => {
