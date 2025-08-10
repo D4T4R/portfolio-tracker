@@ -113,6 +113,23 @@ export default function StockChart({ symbol, type = 'line' }) {
     )
   }
   
+  if (error || !chartData.length) {
+    return (
+      <Box 
+        h="100%" 
+        display="flex" 
+        alignItems="center" 
+        justifyContent="center"
+        p={4}
+      >
+        <Alert status="error" borderRadius="md">
+          <AlertIcon />
+          <Text fontSize="sm">{error || 'No chart data available'}</Text>
+        </Alert>
+      </Box>
+    )
+  }
+  
   if (type === 'area') {
     return (
       <ResponsiveContainer width="100%" height="100%">
