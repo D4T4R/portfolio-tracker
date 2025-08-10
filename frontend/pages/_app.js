@@ -1,4 +1,4 @@
-import "@/lib/axios-setup";
+import "../lib/axios-setup";
 import { ChakraProvider, extendTheme } from "@chakra-ui/react";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import { useRouter } from "next/router";
