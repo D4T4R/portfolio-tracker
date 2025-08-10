@@ -54,17 +54,50 @@ const CustomTooltip = ({ active, payload, label }) => {
 export default function StockChart({ symbol, type = 'line' }) {
   const [chartData, setChartData] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   
   const gridColor = useColorModeValue('#f0f0f0', '#374151')
   const textColor = useColorModeValue('#4a5568', '#a0a0a0')
   const lineColor = useColorModeValue('#3182ce', '#63b3ed')
   
   useEffect(() => {
-    // In a real implementation, you would fetch actual historical data here
-    // For now, we'll generate mock data
-    const mockData = generateMockData(symbol)
-    setChartData(mockData)
-    setLoading(false)
+    const fetchHistoricalData = async () => {
+      if (!symbol) {
+        setLoading(false)
+        return
+      }
+      
+      try {
+        setLoading(true)
+        setError(null)
+        
+        // Fetch historical data from backend
+        const response = await axios.get(`http://localhost:5000/api/historical/${symbol}?period=1mo&interval=1d`)
+        const historicalData = response.data.data
+        
+        // Format data for the chart
+        const formattedData = historicalData.map(item => ({
+          date: formatDate(item.date),
+          price: item.price,
+          volume: item.volume,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close
+        }))
+        
+        setChartData(formattedData)
+      } catch (err) {
+        console.error('Error fetching historical data:', err)
+        setError('Failed to load chart data')
+        // Fallback to empty data
+        setChartData([])
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    fetchHistoricalData()
   }, [symbol])
   
   if (loading) {
