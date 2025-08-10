@@ -1,0 +1,6 @@
+flask>=2.3
+vercel-wsgi>=0.9.1
+yahooquery
+requests
+pandas
+numpy

@@ -1,3 +1,4 @@
+import "@/lib/axios-setup"
 import { ChakraProvider, extendTheme } from '@chakra-ui/react'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { useRouter } from 'next/router'
@@ -106,4 +107,7 @@ function MyApp({ Component, pageProps }) {
   )
 }
 
-export default MyApp
+//export default MyApp
+export default function MyApp({ Component, pageProps }) {
+  return <Component {...pageProps} />;
+}
