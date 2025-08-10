@@ -32,6 +32,10 @@ import { FaChartLine, FaPercent, FaCoins, FaTrendingUp } from 'react-icons/fa'
 import axios from 'axios'
 import Navigation from '../components/Navigation'
 import StockChart from '../components/StockChart'
+import { motion } from 'framer-motion'
+
+const MotionBox = motion(Box)
+const springy = { type: 'spring', stiffness: 260, damping: 22, mass: 0.7 }
 
 export default function StockDetail() {
   const router = useRouter()
@@ -117,12 +121,23 @@ export default function StockDetail() {
 
   if (loading) {
     return (
-      <Box minH="100vh" bg="gray.900">
+      <Box minH="100vh" bg="gray.950">
         <Navigation />
         <Container maxW="container.xl" py={8}>
-          <VStack spacing={8}>
-            <Spinner size="xl" color="blue.500" thickness="4px" />
-            <Text color="gray.400">Loading stock details...</Text>
+          <VStack spacing={6} align="stretch">
+            <Box>
+              <Box mb={4}>
+                <Box h="12px" w="160px" bg="whiteAlpha.200" borderRadius="full" />
+              </Box>
+              <Box h="56px" bg="whiteAlpha.100" borderRadius="lg" />
+            </Box>
+
+            <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
+              <Box h="260px" bg="whiteAlpha.100" borderRadius="lg" />
+              <Box h="260px" bg="whiteAlpha.100" borderRadius="lg" />
+            </SimpleGrid>
+
+            <Box h="340px" bg="whiteAlpha.100" borderRadius="lg" />
           </VStack>
         </Container>
       </Box>
@@ -159,40 +174,50 @@ export default function StockDetail() {
   const profitColor = isProfit ? 'green.400' : 'red.400'
 
   return (
-    <Box minH="100vh" bg="gray.900">
+    <Box minH="100vh" bg="gray.950">
       <Navigation />
       <Container maxW="container.xl" py={6}>
         <VStack spacing={6} align="stretch">
-          {/* Header */}
-          <Flex justify="space-between" align="center" flexWrap="wrap" gap={4}>
-            <HStack spacing={4}>
+          {/* Header with shared element container */}
+          <MotionBox
+            layoutId={symbol ? `card-${symbol}` : undefined}
+            transition={springy}
+            borderRadius="xl"
+            border="1px solid"
+            borderColor={borderColor}
+            p={4}
+            bg={cardBg}
+          >
+            <Flex justify="space-between" align="center" flexWrap="wrap" gap={4}>
+              <HStack spacing={4}>
+                <Button
+                  leftIcon={<ArrowBackIcon />}
+                  variant="ghost"
+                  colorScheme="blue"
+                  onClick={() => router.back()}
+                >
+                  Back
+                </Button>
+                <VStack align="start" spacing={1}>
+                  <Heading size="xl" color={useColorModeValue('gray.800', 'white')}>
+                    {decodeURIComponent(stockName)}
+                  </Heading>
+                  <Badge colorScheme="blue" variant="solid" borderRadius="full" px={3} py={1}>
+                    {symbol}
+                  </Badge>
+                </VStack>
+              </HStack>
+              
               <Button
-                leftIcon={<ArrowBackIcon />}
-                variant="ghost"
-                colorScheme="blue"
-                onClick={() => router.back()}
+                leftIcon={<ExternalLinkIcon />}
+                rightIcon={<FaChartLine />}
+                colorScheme="green"
+                onClick={handleChartClick}
               >
-                Back
+                View Chart
               </Button>
-              <VStack align="start" spacing={1}>
-                <Heading size="xl" color="white">
-                  {decodeURIComponent(stockName)}
-                </Heading>
-                <Badge colorScheme="blue" variant="solid" borderRadius="full" px={3} py={1}>
-                  {symbol}
-                </Badge>
-              </VStack>
-            </HStack>
-            
-            <Button
-              leftIcon={<ExternalLinkIcon />}
-              rightIcon={<FaChartLine />}
-              colorScheme="green"
-              onClick={handleChartClick}
-            >
-              View Chart
-            </Button>
-          </Flex>
+            </Flex>
+          </MotionBox>
 
           {/* Main Content Grid */}
           <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>

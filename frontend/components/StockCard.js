@@ -17,6 +17,10 @@ import {
 import { FaChartLine } from 'react-icons/fa'
 import { useRouter } from 'next/router'
 import { useState } from 'react'
+import { motion } from 'framer-motion'
+
+const MotionBox = motion(Box)
+const springy = { type: 'spring', stiffness: 260, damping: 22, mass: 0.7 }
 
 export default function StockCard({ name, data, portfolioData = null, totalPortfolioValue = null }) {
   const isPositive = data.change >= 0
@@ -55,16 +59,17 @@ export default function StockCard({ name, data, portfolioData = null, totalPortf
     (((portfolioData.currentValue || portfolioData.netValue || 0) / totalPortfolioValue) * 100).toFixed(1) : null
   
   return (
-    <Box
+    <MotionBox
+      layoutId={`card-${data.symbol}`}
       bg={isHovered ? hoverBg : cardBg}
-      border="2px solid"
+      border="1px solid"
       borderColor={isHovered ? hoverBorderColor : borderColor}
       borderRadius="xl"
-      boxShadow={isHovered ? '2xl' : 'lg'}
+      boxShadow={isHovered ? 'xl' : 'md'}
       p={6}
       cursor={portfolioData ? 'pointer' : 'default'}
-      transition="all 0.3s ease"
-      transform={isHovered ? 'translateY(-4px)' : 'translateY(0)'}
+      transition={springy}
+      whileHover={{ y: -4, boxShadow: 'var(--chakra-shadows-xl)' }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={handleCardClick}
@@ -78,7 +83,7 @@ export default function StockCard({ name, data, portfolioData = null, totalPortf
         right: 0,
         height: '4px',
         background: isPositive ? 'linear-gradient(90deg, #48BB78, #38A169)' : 'linear-gradient(90deg, #F56565, #E53E3E)',
-        borderRadius: 'xl xl 0 0'
+        borderRadius: '12px 12px 0 0'
       }}
     >
       {/* Chart Button */}
@@ -229,6 +234,6 @@ export default function StockCard({ name, data, portfolioData = null, totalPortf
           </Text>
         )}
       </VStack>
-    </Box>
+    </MotionBox>
   )
 }

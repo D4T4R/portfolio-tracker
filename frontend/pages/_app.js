@@ -1,4 +1,9 @@
 import { ChakraProvider, extendTheme } from '@chakra-ui/react'
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
+import { useRouter } from 'next/router'
+import { useEffect } from 'react'
+import NProgress from 'nprogress'
+import 'nprogress/nprogress.css'
 
 const theme = extendTheme({
   config: {
@@ -53,10 +58,50 @@ const theme = extendTheme({
   },
 })
 
+const MotionPage = motion('div')
+const pageVariants = {
+  initial: { opacity: 0, y: 12, filter: 'blur(6px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -12, filter: 'blur(4px)' },
+}
+const pageTransition = { type: 'spring', stiffness: 200, damping: 26, mass: 0.8 }
+
 function MyApp({ Component, pageProps }) {
+  const router = useRouter()
+
+  useEffect(() => {
+    NProgress.configure({ showSpinner: false, trickleSpeed: 120 })
+    const handleStart = () => NProgress.start()
+    const handleDone = () => NProgress.done()
+
+    router.events.on('routeChangeStart', handleStart)
+    router.events.on('routeChangeComplete', handleDone)
+    router.events.on('routeChangeError', handleDone)
+
+    return () => {
+      router.events.off('routeChangeStart', handleStart)
+      router.events.off('routeChangeComplete', handleDone)
+      router.events.off('routeChangeError', handleDone)
+    }
+  }, [router.events])
+
   return (
     <ChakraProvider theme={theme}>
-      <Component {...pageProps} />
+      <MotionConfig reducedMotion="user">
+        <AnimatePresence mode="wait" initial={false}>
+          <MotionPage
+            key={router.asPath}
+            variants={pageVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={pageTransition}
+            style={{ minHeight: '100vh' }}
+          >
+            <Component {...pageProps} />
+          </MotionPage>
+        </AnimatePresence>
+      </MotionConfig>
     </ChakraProvider>
   )
 }

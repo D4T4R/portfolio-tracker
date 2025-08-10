@@ -21,8 +21,10 @@ import {
 import { ChevronUpIcon, ChevronDownIcon, RepeatIcon } from '@chakra-ui/icons'
 import axios from 'axios'
 import Navigation from '../components/Navigation'
+import { useRouter } from 'next/router'
 
 export default function PortfolioTable() {
+  const router = useRouter()
   const [portfolioData, setPortfolioData] = useState([])
   const [filteredData, setFilteredData] = useState([])
   const [summaryData, setSummaryData] = useState(null)
@@ -91,6 +93,17 @@ export default function PortfolioTable() {
     
     setFilteredData(sortedData)
     setSortConfig({ key, direction })
+  }
+
+  const goToStockDetail = (stock) => {
+    if (!stock?.stockName || !stock?.symbol) return
+    router.push({
+      pathname: '/stock-detail',
+      query: {
+        stockName: encodeURIComponent(stock.stockName),
+        symbol: stock.symbol,
+      },
+    })
   }
 
   const SortableHeader = ({ children, sortKey, isNumeric = false }) => (
@@ -175,7 +188,16 @@ export default function PortfolioTable() {
             <Tbody>
               {filteredData.map((stock, index) => (
                 <Tr key={index}>
-                  <Td color="white">{stock.stockName}</Td>
+                <Td color="white">
+                  <Text 
+                    color="blue.300" 
+                    cursor="pointer" 
+                    _hover={{ textDecoration: 'underline', color: 'blue.200' }}
+                    onClick={() => goToStockDetail(stock)}
+                  >
+                    {stock.stockName}
+                  </Text>
+                </Td>
                   <Td isNumeric color="white">₹{stock.avgPrice?.toLocaleString() || '0'}</Td>
                   <Td isNumeric color="white">{stock.initialQty?.toLocaleString() || '0'}</Td>
                   <Td isNumeric color="white">{stock.quantity?.toLocaleString() || '0'}</Td>
