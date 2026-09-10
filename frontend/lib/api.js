@@ -82,6 +82,14 @@ export const api = {
 
   transactions: (id) => request(scoped(`/instruments/${id}/transactions`)),
 
+  // Split in two deliberately: detail answers from the local database, while
+  // history reaches the price feed and can be rate limited. One call would
+  // mean a 429 upstream leaving the page with no holdings either.
+  instrumentDetail: (id) => request(scoped(`/instruments/${id}/detail`)),
+
+  instrumentHistory: (id, range = '1y') =>
+    request(scoped(`/instruments/${id}/history?range=${encodeURIComponent(range)}`)),
+
   allTransactions: () => request(scoped('/transactions')),
 
   recordTrade: (id, trade) =>
@@ -136,4 +144,44 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ rows }),
     }),
+
+  fundamentals: (symbol) => fundamentals(symbol),
+}
+
+// MCFinEx is a separate service with its own database, reached through a Next
+// rewrite. Not part of `request` above because it does not live under the
+// ledger's base path and is never scoped to a portfolio - the screening of a
+// company is the same fact whoever holds it.
+const MCFINEX_BASE = process.env.NEXT_PUBLIC_MCFINEX_API || '/api/mcfinex'
+
+export class FundamentalsUnavailable extends Error {}
+export class NotScreened extends Error {}
+
+async function fundamentals(symbol) {
+  // Screener names companies without an exchange suffix.
+  const ticker = String(symbol).replace(/\.(NS|BO)$/i, '')
+
+  let response
+  try {
+    response = await fetch(`${MCFINEX_BASE}/company/${encodeURIComponent(ticker)}`)
+  } catch (err) {
+    // The service being down is the ordinary case, not a fault: it is started
+    // on demand. Distinguished from "not covered" so the panel can say which.
+    throw new FundamentalsUnavailable(err.message)
+  }
+
+  if (response.status === 404) {
+    throw new NotScreened(`${ticker} is not in the screened universe`)
+  }
+  // Any 5xx, not just the gateway codes: proxying to a port with nothing
+  // behind it surfaces as a plain 500, and the reader's next step is the same
+  // either way - check that MCFinEx is up.
+  if (response.status >= 500) {
+    throw new FundamentalsUnavailable(`MCFinEx did not answer (${response.status})`)
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.detail || `Fundamentals request failed (${response.status})`)
+  }
+  return response.json()
 }

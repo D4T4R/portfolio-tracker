@@ -22,6 +22,7 @@ from portfolio.ledger import (
     build_quantity_timeline,
     quantity_on_timeline,
 )
+from portfolio.history import DEFAULT_RANGE, HistoryFetchError, fetch_history
 from portfolio.imports import ImportError_, ParsedRow, parse
 from portfolio.service import NotFound, PortfolioService, ServiceError
 
@@ -380,6 +381,136 @@ def portfolio():
                 "totalReturnPct": money(return_pct),
             },
             "pricesAsOf": as_of.isoformat() if as_of else None,
+        })
+
+
+@bp.get("/instruments/<instrument_id>/detail")
+def instrument_detail(instrument_id):
+    """Everything the stock page shows that comes from the local database.
+
+    Deliberately separate from the chart: this answers instantly, while the
+    history endpoint reaches out to the price feed and can be rate limited. One
+    combined route would mean a 429 upstream leaving the page with no holdings
+    either.
+    """
+    with _session() as session:
+        service = _service(session)
+        instrument = service.get_instrument(instrument_id)
+        prices, as_of = service.stored_prices()
+        holding = service.holding_for(instrument, prices.get(instrument.symbol))
+
+        # Weight is against every open position, archived ones included: they
+        # are still capital in the book even when hidden from the table.
+        total_value = sum(
+            (h.market_value for h in service.holdings(prices, include_archived=True)),
+            Decimal("0"),
+        )
+        weight = (
+            holding.market_value * 100 / total_value if total_value > 0 else Decimal("0")
+        )
+
+        sales = service.realized_sales(instrument)
+        first_trade = min(
+            (t.trade_date for t in instrument.transactions), default=None
+        )
+        return jsonify({
+            **holding_json(holding),
+            "weightPct": money(weight),
+            "pricesAsOf": as_of.isoformat() if as_of else None,
+            "tradeCount": len(instrument.transactions),
+            # isoformat rather than letting jsonify pick: Flask serialises a
+            # bare date as an HTTP header string, which Date() then misreads.
+            "firstTradeDate": first_trade.isoformat() if first_trade else None,
+            "realizedSales": [
+                {
+                    "soldOn": s.sold_on.isoformat(),
+                    "quantity": quantity(s.quantity),
+                    "gain": money(s.gain),
+                    "term": s.term,
+                }
+                for s in sales
+            ],
+        })
+
+
+# Yahoo rate limits hard enough that flipping between ranges, or two phones on
+# the same dashboard, is sufficient to earn a 429. Keyed on symbol and range,
+# with the fetch time, so a revisit inside the window costs nothing.
+_HISTORY_CACHE: dict[tuple[str, str], tuple[datetime, list]] = {}
+HISTORY_TTL_SECONDS = 900
+
+
+def _cached_history(symbol: str, period: str, now=None) -> list:
+    now = now or datetime.now()
+    hit = _HISTORY_CACHE.get((symbol, period))
+    if hit is not None:
+        fetched_at, candles = hit
+        if (now - fetched_at).total_seconds() < HISTORY_TTL_SECONDS:
+            return candles
+
+    candles = fetch_history(symbol, period)
+    _HISTORY_CACHE[(symbol, period)] = (now, candles)
+    return candles
+
+
+@bp.get("/instruments/<instrument_id>/history")
+def instrument_history(instrument_id):
+    """Daily candles for the chart, with this book's trades marked on them."""
+    period = request.args.get("range", DEFAULT_RANGE)
+
+    with _session() as session:
+        service = _service(session)
+        instrument = service.get_instrument(instrument_id)
+        position = service.position_for(instrument)
+
+        try:
+            candles = _cached_history(instrument.symbol, period)
+        except HistoryFetchError as exc:
+            # Not fatal: the rest of the page is worth showing without a chart.
+            return jsonify({
+                "symbol": instrument.symbol,
+                "range": period,
+                "candles": [],
+                "markers": [],
+                "error": str(exc),
+            })
+
+        first = candles[0].day if candles else None
+        markers = [
+            {
+                "date": txn.trade_date.isoformat(),
+                "type": txn.txn_type.value,
+                "quantity": quantity(txn.quantity),
+                "price": money(txn.price, PRICE_SCALE),
+            }
+            # Only what falls inside the window. A marker outside it would be
+            # clamped to the edge of the chart and read as a trade on a day it
+            # did not happen.
+            for txn in service.restated_transactions(instrument)
+            if first is None or txn.trade_date >= first
+        ]
+
+        previous = candles[-2].close if len(candles) > 1 else None
+        latest = candles[-1].close if candles else None
+        return jsonify({
+            "symbol": instrument.symbol,
+            "range": period,
+            "candles": [
+                {
+                    "date": c.day.isoformat(),
+                    "open": money(c.open, PRICE_SCALE),
+                    "high": money(c.high, PRICE_SCALE),
+                    "low": money(c.low, PRICE_SCALE),
+                    "close": money(c.close, PRICE_SCALE),
+                    "volume": c.volume,
+                }
+                for c in candles
+            ],
+            "markers": markers,
+            "averageCost": money(position.average_cost, PRICE_SCALE),
+            "previousClose": money(previous, PRICE_SCALE) if previous else None,
+            "lastClose": money(latest, PRICE_SCALE) if latest else None,
+            "error": None,
         })
 
 

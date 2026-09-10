@@ -844,6 +844,15 @@ class PortfolioService:
     def position_for(self, instrument: Instrument) -> Position:
         return weighted_average(_to_ledger(instrument.transactions, instrument))
 
+    def restated_transactions(self, instrument: Instrument) -> list[LedgerTxn]:
+        """Trades on the current share basis, for marking on the chart.
+
+        The same basis the position and its average cost are quoted in, so a
+        marker's label agrees with the figures printed beside the chart rather
+        than with the price on a contract note from before a split.
+        """
+        return _to_ledger(instrument.transactions, instrument)
+
     def realized_sales(self, instrument: Instrument) -> list[RealizedSale]:
         """FIFO-matched disposals, for the capital gains export."""
         _, sales = fifo(_to_ledger(instrument.transactions, instrument))

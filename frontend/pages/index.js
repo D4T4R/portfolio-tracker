@@ -351,9 +351,15 @@ export default function LedgerDashboard() {
                     >
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-neutral-100">
+                          {/* Keyed on the id, not the symbol: with more than
+                              one portfolio the same symbol names two
+                              different positions. */}
+                          <Link
+                            href={`/stock/${h.instrument.id}`}
+                            className="font-medium text-neutral-100 underline-offset-2 hover:underline"
+                          >
                             {h.instrument.name}
-                          </span>
+                          </Link>
                           {h.instrument.status === 'archived' ? (
                             <Badge>archived</Badge>
                           ) : null}

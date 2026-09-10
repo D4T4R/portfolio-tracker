@@ -586,3 +586,146 @@ class TestCorporateActionsOverHttp:
 
         body = client.get("/api/v2/corporate-actions/suspects").get_json()
         assert body["suspects"] == []
+
+
+class TestStockDetail:
+    """The per-stock page: local figures, then the chart, fetched separately."""
+
+    def test_detail_carries_the_holding_and_its_weight(self, client, monkeypatch):
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+
+        other = client.post(
+            "/api/v2/instruments", json={"symbol": "TRENT.NS", "name": "Trent"}
+        ).get_json()["id"]
+        trade(client, other, "BUY", "2024-01-10", "100", "1200")
+
+        import portfolio.service as service_module
+
+        quotes = {"ITC.NS": Decimal("400"), "TRENT.NS": Decimal("1200")}
+        monkeypatch.setattr(service_module, "fetch_quotes", lambda syms: quotes)
+        client.post("/api/v2/prices/refresh", json={"force": True})
+
+        body = client.get(f"/api/v2/instruments/{iid}/detail").get_json()
+        assert body["instrument"]["symbol"] == "ITC.NS"
+        assert body["tradeCount"] == 1
+        assert body["firstTradeDate"] == "2024-01-10"
+        # 40,000 of a 1,60,000 book.
+        assert body["weightPct"] == "25.00"
+
+    def test_detail_is_scoped_to_its_portfolio(self, client):
+        iid = add_itc(client)
+        other = client.post(
+            "/api/v2/portfolios", json={"name": "Trading"}
+        ).get_json()["id"]
+
+        resp = client.get(
+            f"/api/v2/instruments/{iid}/detail?portfolioId={other}"
+        )
+        assert resp.status_code == 404
+
+    def test_history_marks_this_books_trades_on_the_candles(self, client, monkeypatch):
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+        trade(client, iid, "SELL", "2024-03-01", "40", "480")
+
+        self.stub_candles(monkeypatch, [("2024-01-10", 400), ("2024-03-01", 480)])
+
+        body = client.get(f"/api/v2/instruments/{iid}/history").get_json()
+        assert [m["type"] for m in body["markers"]] == ["BUY", "SELL"]
+        assert body["markers"][0]["price"] == "400.0000"
+        assert body["averageCost"] == "400.0000"
+
+    def test_markers_are_restated_for_splits_like_the_candles_are(
+        self, client, monkeypatch
+    ):
+        # Markers carry the same basis as the average-cost line drawn beside
+        # them. Left at the price paid, a pre-split buy would label the chart
+        # at five times the cost the rest of the page reports.
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+
+        import portfolio.service as service_module
+
+        monkeypatch.setattr(
+            service_module,
+            "fetch_split_history",
+            lambda syms, start: {"ITC.NS": [(date(2024, 6, 1), Decimal("5"))]},
+        )
+        client.post("/api/v2/corporate-actions/sync")
+
+        self.stub_candles(monkeypatch, [("2024-01-10", 80)])
+        body = client.get(f"/api/v2/instruments/{iid}/history").get_json()
+        assert body["markers"][0]["price"] == "80.0000"
+        assert body["markers"][0]["quantity"] == "500.000000"
+
+    def test_a_trade_before_the_window_is_left_off(self, client, monkeypatch):
+        # Charting libraries clamp an out-of-range marker to the edge, which
+        # reads as a trade on a day it did not happen.
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2020-01-10", "100", "400")
+        trade(client, iid, "BUY", "2024-02-10", "10", "450")
+
+        self.stub_candles(monkeypatch, [("2024-01-01", 420), ("2024-02-10", 450)])
+        body = client.get(f"/api/v2/instruments/{iid}/history?range=1mo").get_json()
+        assert [m["date"] for m in body["markers"]] == ["2024-02-10"]
+
+    def test_a_rate_limited_feed_returns_an_empty_chart_not_an_error(
+        self, client, monkeypatch
+    ):
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+
+        import portfolio.api as api_module
+
+        def boom(symbol, period):
+            raise api_module.HistoryFetchError("too many 429 error responses")
+
+        monkeypatch.setattr(api_module, "fetch_history", boom)
+        api_module._HISTORY_CACHE.clear()
+
+        resp = client.get(f"/api/v2/instruments/{iid}/history")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["candles"] == []
+        assert "429" in body["error"]
+
+    def test_a_second_view_inside_the_window_does_not_refetch(
+        self, client, monkeypatch
+    ):
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+
+        calls = []
+        import portfolio.api as api_module
+        from portfolio.history import Candle
+
+        def counted(symbol, period):
+            calls.append(symbol)
+            return [Candle(date(2024, 1, 10), *[Decimal("400")] * 4, volume=1)]
+
+        monkeypatch.setattr(api_module, "fetch_history", counted)
+        api_module._HISTORY_CACHE.clear()
+
+        client.get(f"/api/v2/instruments/{iid}/history")
+        client.get(f"/api/v2/instruments/{iid}/history")
+        assert len(calls) == 1
+
+    @staticmethod
+    def stub_candles(monkeypatch, rows):
+        import portfolio.api as api_module
+        from portfolio.history import Candle
+
+        candles = [
+            Candle(
+                date.fromisoformat(day),
+                Decimal(str(close)),
+                Decimal(str(close)),
+                Decimal(str(close)),
+                Decimal(str(close)),
+                volume=1000,
+            )
+            for day, close in rows
+        ]
+        monkeypatch.setattr(api_module, "fetch_history", lambda symbol, period: candles)
+        api_module._HISTORY_CACHE.clear()
