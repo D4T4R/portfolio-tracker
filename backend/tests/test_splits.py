@@ -216,6 +216,33 @@ class TestRecordDemerger:
         svc.record_demerger(parent.id, child.id, date(2025, 1, 6), D("0.8966"))
         assert svc.position_for(svc.find_by_symbol("ITC.NS")).cost_basis == first
 
+    def test_reapplying_does_not_shrink_the_childs_cost(self, demerger_service):
+        # The parent's position already reflects the first recording, so
+        # carving out of it again would hand the child 10.34% of an amount
+        # that is itself 89.66% of the original - a tenth of its cost gone,
+        # quietly, every time the same demerger is recorded.
+        svc = demerger_service
+        parent, child = self._pair(svc)
+        svc.record_demerger(parent.id, child.id, date(2025, 1, 6), D("0.8966"))
+        first = svc.position_for(svc.find_by_symbol("ITCHOTELS.NS")).cost_basis
+
+        svc.record_demerger(parent.id, child.id, date(2025, 1, 6), D("0.8966"))
+        assert svc.position_for(svc.find_by_symbol("ITCHOTELS.NS")).cost_basis == first
+
+    def test_correcting_the_ratio_restates_from_the_original_cost(self, demerger_service):
+        svc = demerger_service
+        parent, child = self._pair(svc)
+        before = svc.position_for(parent).cost_basis
+
+        # A wrong ratio typed first, then the published one. The second must
+        # apportion the cost the parent had before either was applied.
+        svc.record_demerger(parent.id, child.id, date(2025, 1, 6), D("0.5"))
+        svc.record_demerger(parent.id, child.id, date(2025, 1, 6), D("0.8966"))
+
+        after_parent = svc.position_for(svc.find_by_symbol("ITC.NS")).cost_basis
+        after_child = svc.position_for(svc.find_by_symbol("ITCHOTELS.NS")).cost_basis
+        assert abs((after_parent + after_child) - before) < D("0.05")
+
     def test_out_of_range_fraction_is_rejected(self, demerger_service):
         svc = demerger_service
         parent, child = self._pair(svc)

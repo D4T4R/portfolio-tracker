@@ -432,3 +432,157 @@ class TestCapitalGains:
         assert sales[0]["quantity"] == "100.000000"
         assert sales[1]["term"] == "STCG"
         assert sales[1]["quantity"] == "20.000000"
+
+
+class TestCorporateActionsOverHttp:
+    """The demerger route: the one corporate action with no feed behind it."""
+
+    def _pair(self, client):
+        parent = add_itc(client)
+        trade(client, parent, "BUY", "2021-12-15", "2500", "370.52")
+
+        resp = client.post(
+            "/api/v2/instruments",
+            json={"symbol": "ITCHOTELS.NS", "name": "ITC Hotels"},
+        )
+        child = resp.get_json()["id"]
+        trade(client, child, "BUY", "2021-12-15", "250", "574.80")
+        return parent, child
+
+    def demerge(self, client, parent, child, retained="0.8966"):
+        return client.post(
+            "/api/v2/corporate-actions/demerger",
+            json={
+                "parentId": parent,
+                "childId": child,
+                "exDate": "2025-01-06",
+                "costRetained": retained,
+            },
+        )
+
+    def test_the_two_costs_still_add_up_to_the_parents(self, client):
+        parent, child = self._pair(client)
+        body = self.demerge(client, parent, child).get_json()
+
+        # A demerger deploys no new money, so the response has to show the
+        # parent's cost merely divided. Half a paisa of slack: the carved cost
+        # per share is stored at four decimals and 95,779.42 over 250 shares
+        # does not land on that grid.
+        combined = Decimal(body["parentCostAfter"]) + Decimal(body["childCost"])
+        assert abs(combined - Decimal(body["parentCostBefore"])) < Decimal("0.05")
+
+    def test_the_portfolio_stops_counting_invented_capital(self, client):
+        parent, child = self._pair(client)
+        before = client.get("/api/v2/portfolio").get_json()["summary"]["costBasis"]
+        self.demerge(client, parent, child)
+        after = client.get("/api/v2/portfolio").get_json()["summary"]["costBasis"]
+
+        # The child was booked as an ordinary purchase, which is what a
+        # spreadsheet does and what inflates the denominator of every return.
+        assert Decimal(after) < Decimal(before)
+
+    def test_a_preview_reports_the_figures_without_storing_them(self, client):
+        parent, child = self._pair(client)
+        before = client.get("/api/v2/portfolio").get_json()["summary"]["costBasis"]
+
+        body = client.post(
+            "/api/v2/corporate-actions/demerger",
+            json={
+                "parentId": parent,
+                "childId": child,
+                "exDate": "2025-01-06",
+                "costRetained": "0.8966",
+                "preview": True,
+            },
+        ).get_json()
+        assert body["preview"] is True
+        assert Decimal(body["childCost"]) > 0
+
+        after = client.get("/api/v2/portfolio").get_json()["summary"]["costBasis"]
+        assert after == before
+
+    def test_a_preview_matches_what_applying_stores(self, client):
+        # The dialog previews, the user approves, then it applies. If those two
+        # disagreed, the figure approved would not be the figure on the books -
+        # which is the whole reason the preview is computed here rather than in
+        # the browser.
+        parent, child = self._pair(client)
+        payload = {
+            "parentId": parent,
+            "childId": child,
+            "exDate": "2025-01-06",
+            "costRetained": "0.8966",
+        }
+        previewed = client.post(
+            "/api/v2/corporate-actions/demerger", json={**payload, "preview": True}
+        ).get_json()
+        applied = client.post(
+            "/api/v2/corporate-actions/demerger", json=payload
+        ).get_json()
+
+        assert previewed["parentCostAfter"] == applied["parentCostAfter"]
+        assert previewed["childCost"] == applied["childCost"]
+        assert previewed["childPerShare"] == applied["childPerShare"]
+
+    def test_an_out_of_range_ratio_is_rejected(self, client):
+        parent, child = self._pair(client)
+        resp = self.demerge(client, parent, child, retained="1.2")
+        assert resp.status_code == 400
+        assert "between 0 and 1" in resp.get_json()["error"]
+
+    def test_a_missing_parent_is_rejected(self, client):
+        _, child = self._pair(client)
+        resp = client.post(
+            "/api/v2/corporate-actions/demerger",
+            json={"childId": child, "exDate": "2025-01-06", "costRetained": "0.9"},
+        )
+        assert resp.status_code == 400
+        assert "parentId is required" in resp.get_json()["error"]
+
+    def test_a_parent_from_another_portfolio_is_not_reachable(self, client):
+        parent, child = self._pair(client)
+        other = client.post(
+            "/api/v2/portfolios", json={"name": "Trading"}
+        ).get_json()["id"]
+
+        resp = client.post(
+            f"/api/v2/corporate-actions/demerger?portfolioId={other}",
+            json={
+                "parentId": parent,
+                "childId": child,
+                "exDate": "2025-01-06",
+                "costRetained": "0.8966",
+            },
+        )
+        assert resp.status_code == 404
+
+    def test_suspects_name_the_unexplained_falls(self, client, monkeypatch):
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+
+        import portfolio.service as service_module
+
+        # A 75% fall against cost: the shape a missed 4:1 action leaves behind.
+        monkeypatch.setattr(
+            service_module, "fetch_quotes", lambda syms: {"ITC.NS": Decimal("100")}
+        )
+        client.post("/api/v2/prices/refresh", json={"force": True})
+
+        body = client.get("/api/v2/corporate-actions/suspects").get_json()
+        assert [s["symbol"] for s in body["suspects"]] == ["ITC.NS"]
+        assert body["suspects"][0]["impliedRatio"] == "4.00"
+        assert body["suspects"][0]["instrumentId"] == iid
+
+    def test_a_steady_price_raises_no_suspects(self, client, monkeypatch):
+        iid = add_itc(client)
+        trade(client, iid, "BUY", "2024-01-10", "100", "400")
+
+        import portfolio.service as service_module
+
+        monkeypatch.setattr(
+            service_module, "fetch_quotes", lambda syms: {"ITC.NS": Decimal("390")}
+        )
+        client.post("/api/v2/prices/refresh", json={"force": True})
+
+        body = client.get("/api/v2/corporate-actions/suspects").get_json()
+        assert body["suspects"] == []

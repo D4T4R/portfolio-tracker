@@ -1,7 +1,7 @@
 // Small shadcn-style primitives. Hand-written rather than generated, because
 // the generator assumes the app router and this project is on pages.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -121,6 +121,88 @@ export function Badge({ tone = 'neutral', children }) {
     >
       {children}
     </span>
+  )
+}
+
+/**
+ * A button that opens a list of actions.
+ *
+ * Positioned absolutely rather than fixed, so it stays anchored to its button
+ * inside the animated wrapper _app.js puts around every page - the same
+ * transformed ancestor that forces Modal below into a portal.
+ */
+export function Menu({ label, busyLabel, items, disabled, align = 'right' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return undefined
+    // mousedown rather than click: a click listener fires after the button's
+    // own handler has already toggled the menu back open.
+    const onPointer = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false)
+    }
+    const onKey = (e) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', onPointer)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="primary"
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {busyLabel || label}
+        <span aria-hidden className="text-[10px] opacity-60">
+          ▾
+        </span>
+      </Button>
+
+      {open ? (
+        <div
+          role="menu"
+          className={cn(
+            'absolute z-40 mt-1 w-64 overflow-hidden rounded-md',
+            'border border-surface-border bg-surface-raised shadow-2xl',
+            align === 'right' ? 'right-0' : 'left-0'
+          )}
+        >
+          {items.map((item) => (
+            <button
+              key={item.key}
+              role="menuitem"
+              disabled={item.disabled}
+              onClick={() => {
+                setOpen(false)
+                item.onSelect()
+              }}
+              className={cn(
+                'block w-full border-b border-surface-border/60 px-3 py-2 text-left',
+                'last:border-0 hover:bg-surface-overlay',
+                'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent'
+              )}
+            >
+              <span className="block text-sm font-medium text-neutral-100">
+                {item.label}
+              </span>
+              {item.hint ? (
+                <span className="mt-0.5 block text-xs text-muted">
+                  {item.hint}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

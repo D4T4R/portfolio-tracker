@@ -104,6 +104,20 @@ export const api = {
   syncCorporateActions: () =>
     request(scoped('/corporate-actions/sync'), { method: 'POST' }),
 
+  corporateActionSuspects: () => request(scoped('/corporate-actions/suspects')),
+
+  // costRetained is the fraction of the cost basis staying with the parent, as
+  // published by the company. No feed carries it, hence the argument.
+  //
+  // With preview set the server computes and rolls back, so the figures shown
+  // before applying are the ones that will be stored rather than a second,
+  // floating-point approximation of them.
+  recordDemerger: ({ parentId, childId, exDate, costRetained, preview = false }) =>
+    request(scoped('/corporate-actions/demerger'), {
+      method: 'POST',
+      body: JSON.stringify({ parentId, childId, exDate, costRetained, preview }),
+    }),
+
   dividends: (id) => request(scoped(`/instruments/${id}/dividends`)),
 
   capitalGains: () => request(scoped('/capital-gains')),

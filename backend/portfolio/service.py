@@ -1204,30 +1204,37 @@ class PortfolioService:
         if parent.id == child.id:
             raise ServiceError("a company cannot demerge from itself")
 
-        parent_before = self.position_for(parent)
-        if parent_before.cost_basis <= ZERO:
-            raise ServiceError(f"{parent.symbol} has no cost to apportion")
-
-        carved = parent_before.cost_basis * (Decimal("1") - cost_retained)
-
         existing = self.session.scalar(
             select(CorporateAction).where(
                 CorporateAction.instrument_id == parent.id,
                 CorporateAction.ex_date == ex_date,
             )
         )
-        if existing is None:
-            parent.corporate_actions.append(
-                CorporateAction(
-                    ex_date=ex_date,
-                    ratio=cost_retained,
-                    action_type="DEMERGER",
-                    source="manual",
-                )
+        if existing is not None:
+            # Dropped before the parent is measured, not edited afterwards.
+            # position_for already applies this action, so carving out of what
+            # it left would take a second slice off a basis that has been
+            # reduced once - the child silently loses a tenth of its cost each
+            # time the same demerger is recorded. Recording one twice has to
+            # correct it, not compound it.
+            self.session.delete(existing)
+            self.session.flush()
+            self.session.refresh(parent)
+
+        parent_before = self.position_for(parent)
+        if parent_before.cost_basis <= ZERO:
+            raise ServiceError(f"{parent.symbol} has no cost to apportion")
+
+        carved = parent_before.cost_basis * (Decimal("1") - cost_retained)
+
+        parent.corporate_actions.append(
+            CorporateAction(
+                ex_date=ex_date,
+                ratio=cost_retained,
+                action_type="DEMERGER",
+                source="manual",
             )
-        else:
-            existing.ratio = cost_retained
-            existing.action_type = "DEMERGER"
+        )
 
         # Reprice the child's opening holding so it carries exactly the cost
         # carved out of the parent, no more.

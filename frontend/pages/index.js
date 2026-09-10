@@ -2,6 +2,7 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import DemergerDialog from '../components/v2/DemergerDialog'
 import PortfolioSwitcher, { usePortfolio } from '../components/v2/PortfolioSwitcher'
 import TradeDialog from '../components/v2/TradeDialog'
 import {
@@ -10,6 +11,7 @@ import {
   Card,
   Field,
   Input,
+  Menu,
   Modal,
   cn,
 } from '../components/v2/primitives'
@@ -42,13 +44,15 @@ export default function LedgerDashboard() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [priceState, setPriceState] = useState(null)
-  const [refreshing, setRefreshing] = useState(false)
   const [sort, setSort] = useState({ key: 'marketValue', dir: 'desc' })
   const [showArchived, setShowArchived] = useState(false)
   const [tradeFor, setTradeFor] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
-  const [syncing, setSyncing] = useState(false)
-  const [syncingActions, setSyncingActions] = useState(false)
+  const [demergerOpen, setDemergerOpen] = useState(false)
+  // Which sync is running, or null. One at a time: they all rewrite the same
+  // figures, so two at once would leave whichever finished last describing a
+  // total the other has already moved.
+  const [busy, setBusy] = useState(null)
   const [syncNote, setSyncNote] = useState(null)
 
   const {
@@ -78,7 +82,7 @@ export default function LedgerDashboard() {
   }, [load])
 
   const refresh = async () => {
-    setRefreshing(true)
+    setBusy('prices')
     try {
       const result = await api.refreshPrices(true)
       setPriceState(result)
@@ -86,7 +90,7 @@ export default function LedgerDashboard() {
     } catch (err) {
       setError(err.message)
     } finally {
-      setRefreshing(false)
+      setBusy(null)
     }
   }
 
@@ -112,30 +116,37 @@ export default function LedgerDashboard() {
     )
 
   const syncActions = async () => {
-    setSyncingActions(true)
+    setBusy('splits')
     setSyncNote(null)
     try {
       const r = await api.syncCorporateActions()
+      // A fall the feed has no split for is worth naming rather than
+      // swallowing: it is usually a demerger, which no feed carries, and the
+      // old wording ("no new splits") read as "nothing to do here".
       const suspects = r.suspects?.length
         ? ` Still unexplained: ${r.suspects
             .map((s) => `${s.symbol} down ${s.dropPct}% (looks like ${s.impliedRatio}:1)`)
-            .join('; ')}.`
+            .join('; ')}. If one of those demerged, record it from Sync → Demerger.`
         : ''
       setSyncNote(
         r.error
-          ? `Split check failed: ${r.error}`
-          : `${r.added ? `Applied ${r.added} split(s).` : 'No new splits found.'}${suspects}`
+          ? `Corporate action check failed: ${r.error}`
+          : `${
+              r.added
+                ? `Applied ${r.added} split or bonus issue${r.added === 1 ? '' : 's'}.`
+                : 'No new splits or bonus issues found.'
+            }${suspects}`
       )
       await load()
     } catch (err) {
-      setSyncNote(`Split check failed: ${err.message}`)
+      setSyncNote(`Corporate action check failed: ${err.message}`)
     } finally {
-      setSyncingActions(false)
+      setBusy(null)
     }
   }
 
   const syncDividends = async () => {
-    setSyncing(true)
+    setBusy('dividends')
     setSyncNote(null)
     try {
       const result = await api.syncDividends()
@@ -150,8 +161,45 @@ export default function LedgerDashboard() {
     } catch (err) {
       setSyncNote(`Dividend sync failed: ${err.message}`)
     } finally {
-      setSyncing(false)
+      setBusy(null)
     }
+  }
+
+  // Splits and bonuses arrive from the feed; a demerger cannot, so it is a
+  // form rather than a fetch. Both sit under the same menu because from the
+  // outside they are the same job: make the ledger reflect what the company
+  // did to the shares.
+  const SYNC_ITEMS = [
+    {
+      key: 'prices',
+      label: 'Prices',
+      hint: 'Latest close for every holding',
+      onSelect: refresh,
+    },
+    {
+      key: 'dividends',
+      label: 'Dividends',
+      hint: 'Payments against shares held on each ex-date',
+      onSelect: syncDividends,
+    },
+    {
+      key: 'splits',
+      label: 'Splits & bonuses',
+      hint: 'Restates quantity and cost, leaving money unchanged',
+      onSelect: syncActions,
+    },
+    {
+      key: 'demerger',
+      label: 'Demerger…',
+      hint: 'Move part of a parent’s cost to the company spun out',
+      onSelect: () => setDemergerOpen(true),
+    },
+  ]
+
+  const BUSY_LABELS = {
+    prices: 'Refreshing prices…',
+    dividends: 'Syncing dividends…',
+    splits: 'Checking actions…',
   }
 
   const recordTrade = async (id, trade) => {
@@ -211,16 +259,13 @@ export default function LedgerDashboard() {
             <Link href="/transactions">
               <Button variant="ghost">Trade history</Button>
             </Link>
-            <Button onClick={syncDividends} disabled={syncing}>
-              {syncing ? 'Syncing…' : 'Sync dividends'}
-            </Button>
-            <Button onClick={syncActions} disabled={syncingActions}>
-              {syncingActions ? 'Checking…' : 'Check splits'}
-            </Button>
             <Button onClick={() => setAddOpen(true)}>Add stock</Button>
-            <Button onClick={refresh} disabled={refreshing} variant="primary">
-              {refreshing ? 'Refreshing…' : 'Refresh prices'}
-            </Button>
+            <Menu
+              label="Sync"
+              busyLabel={BUSY_LABELS[busy]}
+              disabled={Boolean(busy)}
+              items={SYNC_ITEMS}
+            />
           </div>
         </div>
       </header>
@@ -399,6 +444,16 @@ export default function LedgerDashboard() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onAdded={load}
+      />
+
+      <DemergerDialog
+        open={demergerOpen}
+        onClose={() => setDemergerOpen(false)}
+        holdings={data?.holdings}
+        onApplied={async (note) => {
+          setSyncNote(note)
+          await load()
+        }}
       />
     </div>
   )

@@ -587,6 +587,75 @@ def sync_corporate_actions():
         })
 
 
+@bp.post("/corporate-actions/demerger")
+def apply_demerger():
+    """Carve a parent's cost basis out to the company demerged from it.
+
+    Unlike splits there is no feed for this. The apportionment is published by
+    the company and cannot be recovered from prices, so the ratio is supplied
+    by the caller as a fraction between 0 and 1.
+
+    With ``preview`` set the work is done and then rolled back. The caller gets
+    the real figures without a second implementation of the arithmetic - one in
+    Decimal here and one in floating point in the browser would disagree, and
+    the browser's would be the one on screen.
+    """
+    payload = request.get_json(silent=True) or {}
+    for field in ("parentId", "childId"):
+        if not payload.get(field):
+            raise ServiceError(f"{field} is required")
+    preview = bool(payload.get("preview"))
+
+    with _session() as session:
+        service = _service(session)
+        result = service.record_demerger(
+            payload["parentId"],
+            payload["childId"],
+            _date(payload, "exDate"),
+            _decimal(payload, "costRetained"),
+        )
+        if preview:
+            session.rollback()
+        else:
+            session.commit()
+        # Returned so the caller can show that the two cost bases still add up
+        # to what the parent alone cost beforehand - the whole point of the
+        # correction, and the one thing worth checking after applying it.
+        return jsonify({
+            "preview": preview,
+            "parentCostBefore": money(result["parentCostBefore"]),
+            "parentCostAfter": money(result["parentCostAfter"]),
+            "childCost": money(result["childCost"]),
+            "childPerShare": money(result["childPerShare"], PRICE_SCALE),
+            "sharesReceived": quantity(result["sharesReceived"]),
+        })
+
+
+@bp.get("/corporate-actions/suspects")
+def corporate_action_suspects():
+    """Holdings whose price has fallen far enough to suggest a missed action.
+
+    The same list the split sync reports, readable on its own so the demerger
+    dialog can offer the unexplained names without writing anything first.
+    """
+    with _session() as session:
+        service = _service(session)
+        return jsonify({
+            "suspects": [
+                {
+                    "instrumentId": s["instrument"].id,
+                    "symbol": s["instrument"].symbol,
+                    "name": s["instrument"].name,
+                    "averageCost": money(s["averageCost"], PRICE_SCALE),
+                    "price": money(s["price"], PRICE_SCALE),
+                    "dropPct": money(s["drop"] * 100),
+                    "impliedRatio": money(s["impliedRatio"]),
+                }
+                for s in service.suspected_corporate_actions()
+            ]
+        })
+
+
 @bp.get("/price-anomalies")
 def price_anomalies():
     """Recorded trades whose price looks like a data-entry error.
