@@ -61,7 +61,7 @@ export default function StockDetail() {
       setLoading(true)
       setError(null)
 
-      // Fetch portfolio data
+      // Fetch portfolio data (includes live price/change fields per stock)
       const portfolioResponse = await axios.get('http://localhost:5000/api/portfolio-with-live-prices')
       const allPortfolioData = portfolioResponse.data.portfolioData
       const summary = portfolioResponse.data.summary
@@ -81,21 +81,14 @@ export default function StockDetail() {
       const percentage = (stockPortfolioData.currentValue / summary.totalCurrentValue) * 100
       setPortfolioPercentage(percentage)
 
-      // Fetch live stock data
-      const pricesResponse = await axios.get('http://localhost:5000/api/prices')
-      const priceData = pricesResponse.data.prices
-      
-      // Find stock in prices data
-      const liveStockData = Object.entries(priceData).find(
-        ([name, data]) => name === decodeURIComponent(stockName)
-      )
-
-      if (liveStockData) {
-        setStockData({
-          name: liveStockData[0],
-          ...liveStockData[1]
-        })
-      }
+      // Derive live data for header from portfolio payload to avoid another full fetch
+      setStockData({
+        name: decodeURIComponent(stockName),
+        symbol: stockPortfolioData.symbol,
+        price: stockPortfolioData.currentPrice,
+        change: stockPortfolioData.change,
+        changePercent: stockPortfolioData.changePercent
+      })
     } catch (err) {
       setError('Failed to fetch stock details')
       console.error('Error fetching stock details:', err)

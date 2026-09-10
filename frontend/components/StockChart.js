@@ -5,12 +5,13 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   ResponsiveContainer,
   Area,
   AreaChart
 } from 'recharts'
-import { Box, Text, useColorModeValue, Alert, AlertIcon } from '@chakra-ui/react'
+import { Box, Text, useColorModeValue, Alert, AlertIcon, IconButton, Tooltip } from '@chakra-ui/react'
+import { RepeatIcon } from '@chakra-ui/icons'
 import axios from 'axios'
 
 // Function to format date for display
@@ -60,46 +61,63 @@ export default function StockChart({ symbol, type = 'line' }) {
   const textColor = useColorModeValue('#4a5568', '#a0a0a0')
   const lineColor = useColorModeValue('#3182ce', '#63b3ed')
   
-  useEffect(() => {
-    const fetchHistoricalData = async () => {
-      if (!symbol) {
-        setLoading(false)
-        return
-      }
-      
-      try {
-        setLoading(true)
-        setError(null)
-        
-        // Fetch historical data from backend
-        const response = await axios.get(`http://localhost:5000/api/historical/${symbol}?period=1mo&interval=1d`)
-        const historicalData = response.data.data
-        
-        // Format data for the chart
-        const formattedData = historicalData.map(item => ({
-          date: formatDate(item.date),
-          price: item.price,
-          volume: item.volume,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close
-        }))
-        
-        setChartData(formattedData)
-      } catch (err) {
-        console.error('Error fetching historical data:', err)
-        setError('Failed to load chart data')
-        // Fallback to empty data
-        setChartData([])
-      } finally {
-        setLoading(false)
-      }
+  // Expose a refresh-capable fetcher so UI can re-hit API when needed (e.g., 429)
+  const fetchHistoricalData = async () => {
+    if (!symbol) {
+      setLoading(false)
+      return
     }
-    
+
+    try {
+      setLoading(true)
+      setError(null)
+
+      // Fetch historical data from backend
+      const response = await axios.get(`http://localhost:5000/api/historical/${symbol}?period=1mo&interval=1d`)
+      const historicalData = response.data.data
+
+      // Format data for the chart
+      const formattedData = historicalData.map(item => ({
+        date: formatDate(item.date),
+        price: item.price,
+        volume: item.volume,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close
+      }))
+
+      setChartData(formattedData)
+    } catch (err) {
+      console.error('Error fetching historical data:', err)
+      setError('Failed to load chart data')
+      // Fallback to empty data
+      setChartData([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
     fetchHistoricalData()
   }, [symbol])
-  
+
+  const RefreshButton = (
+    <Box position="absolute" top={2} right={2} zIndex={1}>
+      <Tooltip label="Refresh chart" hasArrow>
+        <IconButton
+          aria-label="Refresh chart"
+          icon={<RepeatIcon />}
+          size="sm"
+          variant="ghost"
+          colorScheme="blue"
+          onClick={fetchHistoricalData}
+          isLoading={loading}
+        />
+      </Tooltip>
+    </Box>
+  )
+
   if (loading) {
     return (
       <Box 
@@ -132,14 +150,32 @@ export default function StockChart({ symbol, type = 'line' }) {
   
   if (type === 'area') {
     return (
+      <Box position="relative" w="100%" h="100%">
+        {RefreshButton}
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <defs>
+              <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={lineColor} stopOpacity={0.8} />
+                <stop offset="95%" stopColor={lineColor} stopOpacity={0.1} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+            <XAxis dataKey="date" tick={{ fontSize: 12, fill: textColor }} axisLine={{ stroke: gridColor }} />
+            <YAxis tick={{ fontSize: 12, fill: textColor }} axisLine={{ stroke: gridColor }} tickFormatter={(value) => `₹${value.toFixed(0)}`} />
+            <RechartsTooltip content={<CustomTooltip />} />
+            <Area type="monotone" dataKey="price" stroke={lineColor} strokeWidth={2} fillOpacity={1} fill="url(#colorPrice)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </Box>
+    )
+  }
+  
+  return (
+    <Box position="relative" w="100%" h="100%">
+      {RefreshButton}
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-          <defs>
-            <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={lineColor} stopOpacity={0.8}/>
-              <stop offset="95%" stopColor={lineColor} stopOpacity={0.1}/>
-            </linearGradient>
-          </defs>
+        <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
           <XAxis 
             dataKey="date" 
@@ -151,44 +187,17 @@ export default function StockChart({ symbol, type = 'line' }) {
             axisLine={{ stroke: gridColor }}
             tickFormatter={(value) => `₹${value.toFixed(0)}`}
           />
-          <Tooltip content={<CustomTooltip />} />
-          <Area
+          <RechartsTooltip content={<CustomTooltip />} />
+          <Line
             type="monotone"
             dataKey="price"
             stroke={lineColor}
             strokeWidth={2}
-            fillOpacity={1}
-            fill="url(#colorPrice)"
+            dot={{ fill: lineColor, strokeWidth: 2, r: 4 }}
+            activeDot={{ r: 6, stroke: lineColor, strokeWidth: 2 }}
           />
-        </AreaChart>
+        </LineChart>
       </ResponsiveContainer>
-    )
-  }
-  
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-        <XAxis 
-          dataKey="date" 
-          tick={{ fontSize: 12, fill: textColor }}
-          axisLine={{ stroke: gridColor }}
-        />
-        <YAxis 
-          tick={{ fontSize: 12, fill: textColor }}
-          axisLine={{ stroke: gridColor }}
-          tickFormatter={(value) => `₹${value.toFixed(0)}`}
-        />
-        <Tooltip content={<CustomTooltip />} />
-        <Line
-          type="monotone"
-          dataKey="price"
-          stroke={lineColor}
-          strokeWidth={2}
-          dot={{ fill: lineColor, strokeWidth: 2, r: 4 }}
-          activeDot={{ r: 6, stroke: lineColor, strokeWidth: 2 }}
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    </Box>
   )
 }

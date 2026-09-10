@@ -5,10 +5,22 @@ from datetime import datetime
 import json
 import pandas as pd
 import os
+import threading
+import time
 from pathlib import Path
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all domains on all routes
+
+# Only the dev frontends may call the API. A wide-open CORS policy would let any
+# page the user visits drive these endpoints, including the Excel path setter.
+_allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001"
+    ).split(",")
+    if origin.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": _allowed_origins}})
 
 # Your complete stock tickers dictionary
 stock_name_to_scrip = {
@@ -47,37 +59,102 @@ stock_name_to_scrip = {
     "TCS": "TCS.NS",
 }
 
+class PriceFetchError(Exception):
+    """Raised when Yahoo Finance cannot be reached (rate limit, network error)."""
+
+
+# /api/prices and /api/portfolio-with-live-prices request the same symbol set,
+# and the dashboard calls both every 90 seconds. Without a shared cache that is
+# two full 33-symbol sweeps per refresh, which Yahoo answers with 429s.
+PRICE_CACHE_TTL_SECONDS = int(os.environ.get("PRICE_CACHE_TTL", "60"))
+_price_cache = {}
+_price_cache_lock = threading.Lock()
+
+
+def fetch_price_data(symbols):
+    """Fetch quote payloads from Yahoo Finance, keyed by symbol.
+
+    Results are cached per symbol set for PRICE_CACHE_TTL_SECONDS. Raises
+    PriceFetchError rather than letting the upstream exception escape, so
+    callers can choose between failing and falling back to stored values.
+    """
+    cache_key = tuple(sorted(symbols))
+    now = time.monotonic()
+
+    with _price_cache_lock:
+        entry = _price_cache.get(cache_key)
+        if entry and (now - entry["fetched_at"]) < PRICE_CACHE_TTL_SECONDS:
+            return entry["data"]
+
+    try:
+        data = Ticker(symbols).price
+    except Exception as exc:
+        raise PriceFetchError(str(exc)) from exc
+
+    if not isinstance(data, dict):
+        raise PriceFetchError(f"unexpected response from Yahoo Finance: {data!r}")
+
+    with _price_cache_lock:
+        _price_cache[cache_key] = {"data": data, "fetched_at": time.monotonic()}
+
+    return data
+
+
+def extract_quote(info):
+    """Pull (price, change, change_percent) out of one Yahoo quote payload.
+
+    Yahoo reports regularMarketChangePercent as a fraction (0.0123 == 1.23%),
+    so it is scaled here to the percentage the UI expects. Any field may be
+    None when the symbol is unknown or the payload is an error string.
+    """
+    if not isinstance(info, dict):
+        return None, None, None
+
+    price = info.get("regularMarketPrice")
+    if price is None:
+        price = info.get("regularMarketPreviousClose")
+
+    change = info.get("regularMarketChange")
+
+    change_percent = info.get("regularMarketChangePercent")
+    if change_percent is not None:
+        change_percent = change_percent * 100
+
+    return price, change, change_percent
+
+
 @app.route('/api/prices')
 def get_prices():
     """Get current market prices for all stocks"""
     symbols = list(stock_name_to_scrip.values())
-    tickers = Ticker(symbols)
-    price_data = tickers.price
+
+    try:
+        price_data = fetch_price_data(symbols)
+    except PriceFetchError as exc:
+        # Yahoo rate-limits aggressively. Report it as a temporary upstream
+        # failure rather than letting it surface as an opaque 500.
+        return jsonify({
+            "error": "Live price data is temporarily unavailable.",
+            "detail": str(exc),
+            "pricesLive": False,
+        }), 503
 
     prices = {}
     for name, symbol in stock_name_to_scrip.items():
-        info = price_data.get(symbol)
-        price = None
-        change = None
-        change_percent = None
-        
-        if info and isinstance(info, dict):
-            price = info.get("regularMarketPrice")
-            if price is None:
-                price = info.get("regularMarketPreviousClose")
-            
-            change = info.get("regularMarketChange")
-            change_percent = info.get("regularMarketChangePercent")
-        
+        price, change, change_percent = extract_quote(price_data.get(symbol))
+
         prices[name] = {
-            "price": round(price, 2) if price else "N/A",
-            "change": round(change, 2) if change else 0,
-            "changePercent": round(change_percent, 2) if change_percent else 0,
+            # "N/A" is the sentinel StockCard.js checks for; a price of 0 is a
+            # real price and must not collapse into it.
+            "price": round(price, 2) if price is not None else "N/A",
+            "change": round(change, 2) if change is not None else 0,
+            "changePercent": round(change_percent, 2) if change_percent is not None else 0,
             "symbol": symbol
         }
-    
+
     return jsonify({
         "prices": prices,
+        "pricesLive": True,
         "timestamp": datetime.now().isoformat(),
         "date": datetime.now().strftime("%B %d, %Y")
     })
@@ -98,46 +175,109 @@ def get_stock_details(stock_name):
     
     symbol = stock_name_to_scrip[stock_name]
     ticker = Ticker(symbol)
-    
+
     try:
         price_data = ticker.price[symbol]
         summary_data = ticker.summary_detail[symbol]
-        
+    except Exception as exc:
+        app.logger.warning("detail lookup failed for %s: %s", symbol, exc)
         return jsonify({
-            "name": stock_name,
-            "symbol": symbol,
-            "currentPrice": price_data.get("regularMarketPrice"),
-            "previousClose": price_data.get("regularMarketPreviousClose"),
-            "change": price_data.get("regularMarketChange"),
-            "changePercent": price_data.get("regularMarketChangePercent"),
-            "dayHigh": price_data.get("regularMarketDayHigh"),
-            "dayLow": price_data.get("regularMarketDayLow"),
-            "volume": price_data.get("regularMarketVolume"),
-            "marketCap": summary_data.get("marketCap"),
-            "pe": summary_data.get("trailingPE"),
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            "error": "Live data for this stock is temporarily unavailable.",
+        }), 503
 
-# Global variable to store excel file path
-EXCEL_FILE_PATH = None
+    if not isinstance(price_data, dict) or not isinstance(summary_data, dict):
+        return jsonify({"error": "Live data for this stock is temporarily unavailable."}), 503
+
+    _, _, change_percent = extract_quote(price_data)
+
+    return jsonify({
+        "name": stock_name,
+        "symbol": symbol,
+        "currentPrice": price_data.get("regularMarketPrice"),
+        "previousClose": price_data.get("regularMarketPreviousClose"),
+        "change": price_data.get("regularMarketChange"),
+        "changePercent": change_percent,
+        "dayHigh": price_data.get("regularMarketDayHigh"),
+        "dayLow": price_data.get("regularMarketDayLow"),
+        "volume": price_data.get("regularMarketVolume"),
+        "marketCap": summary_data.get("marketCap"),
+        "pe": summary_data.get("trailingPE"),
+        "timestamp": datetime.now().isoformat()
+    })
+
+# Workbook location. Prefer PORTFOLIO_EXCEL_PATH at startup; /api/set-excel-path
+# can override it at runtime but only within PORTFOLIO_DATA_DIR.
+ALLOWED_DATA_DIR = Path(
+    os.environ.get("PORTFOLIO_DATA_DIR", Path.home())
+).expanduser().resolve()
+ALLOWED_WORKBOOK_SUFFIXES = {".xlsx", ".xls", ".xlsm"}
+EXCEL_FILE_PATH = os.environ.get("PORTFOLIO_EXCEL_PATH")
+
+
+# Header and summary rows that appear in the sheet but are not holdings. The
+# workbook ends with a TOTAL row whose QTY is a column sum, so a plain
+# "quantity > 0" filter is not enough to exclude it.
+NON_POSITION_ROW_LABELS = {
+    'STOCK NAME', 'STOCK', 'NAME', 'TOTAL', 'TOTALS', 'GRAND TOTAL', 'SUM', 'NAN',
+}
+
+
+def is_position_row(stock_name):
+    """True when a sheet row represents an actual holding rather than a header/total."""
+    return bool(stock_name) and stock_name.strip().upper() not in NON_POSITION_ROW_LABELS
+
+
+def safe_float(value, default=0):
+    """Coerce a spreadsheet cell to float, tolerating thousands separators."""
+    try:
+        if pd.notna(value) and str(value).strip() != '':
+            return float(str(value).replace(',', ''))
+        return default
+    except (ValueError, TypeError):
+        return default
+
+
+def resolve_workbook_path(raw_path):
+    """Validate a caller-supplied workbook path.
+
+    Returns the resolved Path, or raises ValueError with a message safe to show
+    the caller. Symlinks are resolved before the containment check so they
+    cannot be used to step outside ALLOWED_DATA_DIR.
+    """
+    if not raw_path or not isinstance(raw_path, str):
+        raise ValueError("File path is required")
+
+    try:
+        resolved = Path(raw_path).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ValueError("File does not exist")
+
+    if not resolved.is_file():
+        raise ValueError("Path is not a file")
+
+    if resolved.suffix.lower() not in ALLOWED_WORKBOOK_SUFFIXES:
+        raise ValueError("File must be an Excel workbook (.xlsx, .xls or .xlsm)")
+
+    if ALLOWED_DATA_DIR != resolved and ALLOWED_DATA_DIR not in resolved.parents:
+        raise ValueError("File is outside the permitted data directory")
+
+    return resolved
+
 
 @app.route('/api/set-excel-path', methods=['POST'])
 def set_excel_path():
     """Set the Excel file path"""
     global EXCEL_FILE_PATH
-    data = request.get_json()
-    file_path = data.get('path')
-    
-    if not file_path:
-        return jsonify({"error": "File path is required"}), 400
-    
-    if not os.path.exists(file_path):
-        return jsonify({"error": "File does not exist"}), 404
-    
-    EXCEL_FILE_PATH = file_path
-    return jsonify({"message": "Excel file path set successfully", "path": file_path})
+
+    data = request.get_json(silent=True) or {}
+
+    try:
+        resolved = resolve_workbook_path(data.get('path'))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    EXCEL_FILE_PATH = str(resolved)
+    return jsonify({"message": "Excel file path set successfully", "path": EXCEL_FILE_PATH})
 
 @app.route('/api/portfolio-data')
 def get_portfolio_data():
@@ -155,16 +295,16 @@ def get_portfolio_data():
         for index, row in df.iterrows():
             stock_name = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
             
-            # Skip empty rows or headers
-            if not stock_name or stock_name.upper() in ['STOCK NAME', 'STOCK', 'NAME']:
+            # Skip empty rows, headers and the trailing TOTAL row
+            if not is_position_row(stock_name):
                 continue
             
             # Extract data from different columns (adjust indices based on your Excel structure)
             portfolio_item = {
                 "stockName": stock_name,
-                "quantity": float(row.iloc[1]) if pd.notna(row.iloc[1]) and str(row.iloc[1]).replace('.', '').replace('-', '').isdigit() else 0,
-                "avgBuyPrice": float(row.iloc[2]) if pd.notna(row.iloc[2]) and str(row.iloc[2]).replace('.', '').replace('-', '').isdigit() else 0,
-                "currentPrice": float(row.iloc[5]) if len(row) > 5 and pd.notna(row.iloc[5]) and str(row.iloc[5]).replace('.', '').replace('-', '').isdigit() else 0,
+                "quantity": safe_float(row.iloc[1]),
+                "avgBuyPrice": safe_float(row.iloc[2]),
+                "currentPrice": safe_float(row.iloc[5]) if len(row) > 5 else 0,
                 "investedValue": 0,
                 "currentValue": 0,
                 "pnl": 0,
@@ -192,7 +332,8 @@ def get_portfolio_data():
         })
         
     except Exception as e:
-        return jsonify({"error": f"Error reading Excel file: {str(e)}"}), 500
+        app.logger.exception("failed to read workbook")
+        return jsonify({"error": "Could not read the Excel file."}), 500
 
 @app.route('/api/portfolio-with-live-prices')
 def get_portfolio_with_live_prices():
@@ -212,24 +353,28 @@ def get_portfolio_with_live_prices():
         # Also load data values
         df = pd.read_excel(EXCEL_FILE_PATH)
         
-        # Get live prices (with error handling for rate limiting)
+        # Get live prices. If Yahoo is unavailable we fall back to the CMP column
+        # stored in the workbook, but that fact is reported in the response so the
+        # UI can avoid labelling stale figures as live.
         symbols = list(stock_name_to_scrip.values())
         price_data = {}
-        
+        prices_live = True
+        price_error = None
+
         try:
-            tickers = Ticker(symbols)
-            price_data = tickers.price
-        except Exception as price_error:
-            print(f"Warning: Could not fetch live prices - {str(price_error)}")
-            # Continue without live prices - will use Excel prices
+            price_data = fetch_price_data(symbols)
+        except PriceFetchError as exc:
+            prices_live = False
+            price_error = str(exc)
+            app.logger.warning("falling back to workbook prices: %s", exc)
         
         portfolio_data = []
         
         for index, row in df.iterrows():
             stock_name = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
             
-            # Skip empty rows or headers
-            if not stock_name or stock_name.upper() in ['STOCK NAME', 'STOCK', 'NAME']:
+            # Skip empty rows, headers and the trailing TOTAL row
+            if not is_position_row(stock_name):
                 continue
             
             # Get live price
@@ -238,25 +383,19 @@ def get_portfolio_with_live_prices():
             change = 0
             change_percent = 0
             
-            if symbol and symbol in price_data:
-                info = price_data[symbol]
-                if info and isinstance(info, dict):
-                    live_price = info.get("regularMarketPrice") or info.get("regularMarketPreviousClose") or 0
-                    change = info.get("regularMarketChange", 0)
-                    change_percent = info.get("regularMarketChangePercent", 0)
+            if symbol:
+                quote_price, quote_change, quote_change_percent = extract_quote(
+                    price_data.get(symbol)
+                )
+                if quote_price is not None:
+                    live_price = quote_price
+                change = quote_change or 0
+                change_percent = quote_change_percent or 0
             
             # Excel column mapping based on your headers:
             # A: Stock Name, B: AVG PRICE, C: INITIAL QTY, D: QTY, E: AVG INVESTED, 
             # F: CMP ON Aug 01 2025, G: NET VALUE, H: UNREALIZED PROFIT, I: DIVIDEND TILL NOW,
             # J: TOTAL PROFIT, K: PROFIT %, L: REALIZED, M: BOOKED QTY, N: REMARKS
-            
-            def safe_float(value, default=0):
-                try:
-                    if pd.notna(value) and str(value).strip() != '':
-                        return float(str(value).replace(',', ''))
-                    return default
-                except (ValueError, TypeError):
-                    return default
             
             portfolio_item = {
                 "stockName": stock_name,
@@ -284,6 +423,13 @@ def get_portfolio_with_live_prices():
             calculated_avg_invested = round(portfolio_item["quantity"] * portfolio_item["avgPrice"], 2)
             portfolio_item["avgInvested"] = calculated_avg_invested
             portfolio_item["investedValue"] = calculated_avg_invested
+
+            # Capital deployed over the whole life of the position. Realized profit
+            # was earned on the booked shares, so the return denominator has to
+            # include them; INITIAL QTY == QTY + BOOKED QTY in the workbook.
+            portfolio_item["costBasis"] = round(
+                portfolio_item["avgPrice"] * portfolio_item["initialQty"], 2
+            )
             
             # 2. Calculate Net Value = Quantity × Current Price
             calculated_net_value = round(portfolio_item["quantity"] * portfolio_item["currentPrice"], 2)
@@ -340,60 +486,88 @@ def get_portfolio_with_live_prices():
             
             portfolio_data.append(portfolio_item)
         
-        # Calculate summary totals according to Excel formulas
-        
-        # Filter only stocks with quantities > 0 for accurate count
-        active_stocks = [item for item in portfolio_data if item["quantity"] > 0]
-        
-        total_invested = sum(item["investedValue"] for item in active_stocks)
-        total_current = sum(item["currentValue"] for item in active_stocks)
-        total_unrealized = sum(item["unrealizedProfit"] for item in active_stocks)
-        
-        # Total Profit calculation as per Excel: =SUM(J2:Jn)+SUM(L2:Ln)
-        # Where J = totalProfit column, L = realized column
-        total_profit_from_j = sum(item["totalProfit"] for item in active_stocks)
-        total_realized_from_l = sum(item["realized"] for item in active_stocks)
-        total_profit_sum = round(total_profit_from_j + total_realized_from_l, 2)
-        
-        # Profit % calculation as per Excel: (Total Profit * 100) / Sum of Avg Invested
-        total_profit_percent = (total_profit_sum * 100 / total_invested) if total_invested > 0 else 0
-        
+        # Currently held positions drive the market-value figures.
+        held_stocks = [item for item in portfolio_data if item["quantity"] > 0]
+
+        # Profit figures must also include fully exited positions, whose realized
+        # gains and dividends are still part of the portfolio's result.
+        touched_stocks = [
+            item for item in portfolio_data
+            if item["initialQty"] > 0 or item["realized"] or item["dividendTillNow"]
+        ]
+
+        total_invested = sum(item["investedValue"] for item in held_stocks)
+        total_current = sum(item["currentValue"] for item in held_stocks)
+        total_unrealized = sum(item["unrealizedProfit"] for item in held_stocks)
+
+        total_realized = sum(item["realized"] for item in touched_stocks)
+        total_dividends = sum(item["dividendTillNow"] for item in touched_stocks)
+
+        # Each component is counted exactly once. The workbook's own total row
+        # (=SUM(J2:J35)+SUM(L2:L35)) adds realized twice, because every Jn is
+        # already SUM(In, Hn, Ln); this does not reproduce that.
+        total_profit_sum = round(total_unrealized + total_realized + total_dividends, 2)
+
+        # Return is measured against all capital deployed, not just the capital
+        # still in the market, so realized gains sit over the basis that produced
+        # them rather than inflating the percentage.
+        total_cost_basis = sum(item["costBasis"] for item in touched_stocks)
+        total_profit_percent = (
+            (total_profit_sum * 100 / total_cost_basis) if total_cost_basis > 0 else 0
+        )
+        unrealized_percent = (
+            (total_unrealized * 100 / total_invested) if total_invested > 0 else 0
+        )
+
         return jsonify({
             "portfolioData": portfolio_data,
             "summary": {
-                "totalStocks": len(active_stocks),  # Count only active stocks
+                "totalStocks": len(held_stocks),
                 "totalInvestedValue": round(total_invested, 2),
                 "totalCurrentValue": round(total_current, 2),
-                "totalPnL": round(total_unrealized, 2),  # Unrealized profit for table display
-                "totalProfitSum": total_profit_sum,  # Total profit including realized
-                "totalPnLPercent": round(total_profit_percent, 2),  # Correct profit %
-                "gainers": len([item for item in active_stocks if item["totalProfit"] > 0]),
-                "losers": len([item for item in active_stocks if item["totalProfit"] < 0])
+                "totalPnL": round(total_unrealized, 2),  # Unrealized, for the table
+                "totalPnLPercent": round(unrealized_percent, 2),  # Pairs with totalPnL
+                "totalRealized": round(total_realized, 2),
+                "totalDividends": round(total_dividends, 2),
+                "totalCostBasis": round(total_cost_basis, 2),
+                "totalProfitSum": total_profit_sum,  # Unrealized + realized + dividends
+                "totalProfitPercent": round(total_profit_percent, 2),
+                "gainers": len([item for item in held_stocks if item["unrealizedProfit"] > 0]),
+                "losers": len([item for item in held_stocks if item["unrealizedProfit"] < 0])
             },
+            "pricesLive": prices_live,
+            "priceError": price_error,
             "timestamp": datetime.now().isoformat(),
             "date": datetime.now().strftime("%B %d, %Y")
         })
         
     except Exception as e:
-        return jsonify({"error": f"Error processing portfolio data: {str(e)}"}), 500
+        app.logger.exception("failed to process portfolio data")
+        return jsonify({"error": "Could not process the portfolio data."}), 500
 
 @app.route('/api/historical/<symbol>')
 def get_historical_data(symbol):
     """Get historical price data for a stock"""
+    # Default to 30 days of data
+    period = request.args.get('period', '1mo')  # Options: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
+    interval = request.args.get('interval', '1d')  # Options: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+
     try:
-        # Default to 30 days of data
-        period = request.args.get('period', '1mo')  # Options: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
-        interval = request.args.get('interval', '1d')  # Options: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
-        
-        ticker = Ticker(symbol)
-        history = ticker.history(period=period, interval=interval)
-        
-        if history is None or history.empty:
-            return jsonify({"error": "No historical data found"}), 404
-        
+        history = Ticker(symbol).history(period=period, interval=interval)
+    except Exception as exc:
+        # Same rate-limit story as the quote endpoints: upstream unavailability
+        # is a 503, not an internal error, and the raw exception is not echoed.
+        app.logger.warning("history lookup failed for %s: %s", symbol, exc)
+        return jsonify({"error": "Historical data is temporarily unavailable."}), 503
+
+    # yahooquery returns a plain string instead of a frame for bad symbols.
+    if not isinstance(history, pd.DataFrame) or history.empty:
+        return jsonify({"error": "No historical data found"}), 404
+
+    try:
         # Reset index to get date as a column
         history = history.reset_index()
-        
+
         # Convert to list of dictionaries for JSON response
         chart_data = []
         for _, row in history.iterrows():
@@ -415,9 +589,32 @@ def get_historical_data(symbol):
             "timestamp": datetime.now().isoformat()
         })
         
-    except Exception as e:
-        return jsonify({"error": f"Error fetching historical data: {str(e)}"}), 500
+    except Exception as exc:
+        app.logger.exception("failed to serialise history for %s", symbol)
+        return jsonify({"error": "Could not read the historical data."}), 500
+
+# ------------------------------------------------------------- ledger API v2
+# The transaction-ledger endpoints that replace the Excel dependency. Mounted
+# only when a database is configured, so the legacy endpoints above keep
+# working during the migration.
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from portfolio.api import create_api
+
+    _engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
+    app.register_blueprint(create_api(_session_factory))
+    app.logger.info("ledger API mounted at /api/v2")
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # The Werkzeug debugger allows arbitrary code execution, so it stays off
+    # unless explicitly requested via FLASK_DEBUG=1.
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in {"1", "true", "yes"}
+    app.run(host=os.environ.get("HOST", "127.0.0.1"),
+            port=int(os.environ.get("PORT", 5000)),
+            debug=debug)
 

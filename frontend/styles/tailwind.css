@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Money columns align only with tabular figures. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

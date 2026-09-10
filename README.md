@@ -159,11 +159,31 @@ portfolio-tracker/
 
 ## 🔗 API Endpoints
 
-### Stock Data
-- `GET /api/stocks` - Fetch live stock data for portfolio
-- `POST /api/set-excel-path` - Set Excel file path
-- `GET /api/portfolio` - Get portfolio data from Excel
-- `GET /api/portfolio-summary` - Get portfolio summary statistics
+### Market Data
+- `GET /api/prices` - Live prices for every tracked ticker
+- `GET /api/stocks` - The name → NSE symbol map
+- `GET /api/detailed/<stock_name>` - Quote detail for one stock
+- `GET /api/historical/<symbol>?period=1mo&interval=1d` - OHLCV history
+
+### Portfolio
+- `POST /api/set-excel-path` - Point the API at a workbook (must live under `PORTFOLIO_DATA_DIR`)
+- `GET /api/portfolio-data` - Positions parsed from the workbook
+- `GET /api/portfolio-with-live-prices` - Positions valued at live prices, plus summary totals
+
+Live-price responses carry a `pricesLive` flag. When Yahoo Finance rate-limits,
+`/api/prices` returns `503` and `/api/portfolio-with-live-prices` falls back to the
+workbook's stored CMP column with `pricesLive: false` — the UI surfaces that rather
+than presenting stale figures as current.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORTFOLIO_EXCEL_PATH` | unset | Workbook to load at startup |
+| `PORTFOLIO_DATA_DIR` | `$HOME` | Directory `set-excel-path` is confined to |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:3001` | Permitted browser origins |
+| `PRICE_CACHE_TTL` | `60` | Seconds to reuse an upstream price fetch |
+| `FLASK_DEBUG` | off | Enables the Werkzeug debugger (never set in production) |
 
 ---
 
@@ -180,10 +200,18 @@ The application reads your Excel portfolio file and maps columns correctly:
 
 ### Smart Calculations
 - **Current Value**: Live price × quantity
-- **Invested Value**: Average price × quantity
-- **Unrealized P&L**: Current value - invested value
-- **Total Profit**: Unrealized + realized + dividends
-- **Profit Percentage**: Total profit / invested value × 100
+- **Invested Value**: Average price × quantity (capital still in the market)
+- **Cost Basis**: Average price × initial quantity (all capital ever deployed)
+- **Unrealized P&L**: Current value − invested value
+- **Unrealized %**: Unrealized P&L / invested value × 100
+- **Total Profit**: Unrealized + realized + dividends, each counted **once**
+- **Total Return %**: Total profit / cost basis × 100
+
+> Realized gains were earned on shares that have since been sold, so they are
+> measured against cost basis rather than the capital still invested. Note that
+> the source workbook's own `TOTAL` row computes `=SUM(J)+SUM(L)` while each `J`
+> is already `SUM(I, H, L)` — that double-counts realized profit, and the API
+> deliberately does not reproduce it.
 
 ### Error Handling
 - Graceful fallback to Excel values when API fails

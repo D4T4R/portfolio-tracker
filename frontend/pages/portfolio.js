@@ -232,14 +232,20 @@ export default function PortfolioTable() {
                   <Td isNumeric color={summaryData.totalPnL >= 0 ? 'green.400' : 'red.400'} fontSize="lg">
                     ₹{summaryData.totalPnL.toLocaleString()}
                   </Td> {/* Unrealized Profit */}
-                  <Td></Td> {/* Dividend Till Now */}
+                  <Td isNumeric color="white" fontSize="lg">
+                    ₹{(summaryData.totalDividends ?? 0).toLocaleString()}
+                  </Td> {/* Dividend Till Now */}
                   <Td isNumeric color={(summaryData.totalProfitSum || summaryData.totalPnL) >= 0 ? 'green.400' : 'red.400'} fontSize="lg">
                     ₹{(summaryData.totalProfitSum || summaryData.totalPnL).toLocaleString()}
                   </Td> {/* Total Profit */}
-                  <Td isNumeric color={summaryData.totalPnLPercent >= 0 ? 'green.400' : 'red.400'} fontSize="lg">
-                    {summaryData.totalPnLPercent}%
+                  {/* Pairs with Total Profit above, so it must be the total-return
+                      percentage rather than the unrealized-only totalPnLPercent. */}
+                  <Td isNumeric color={(summaryData.totalProfitPercent ?? summaryData.totalPnLPercent) >= 0 ? 'green.400' : 'red.400'} fontSize="lg">
+                    {summaryData.totalProfitPercent ?? summaryData.totalPnLPercent}%
                   </Td> {/* Profit % */}
-                  <Td></Td> {/* Realized */}
+                  <Td isNumeric color="white" fontSize="lg">
+                    ₹{(summaryData.totalRealized ?? 0).toLocaleString()}
+                  </Td> {/* Realized */}
                   <Td></Td> {/* Booked Qty */}
                 </Tr>
               )}

@@ -1,0 +1,125 @@
+// Client for the ledger API. Kept free of formatting concerns: every numeric
+// field stays a string exactly as the server sent it.
+
+// Relative by default so the API is whatever origin served the page. Next
+// rewrites /api/* to the Flask port (see next.config.js), which keeps this
+// working when the dashboard is opened from another device on the network —
+// an absolute localhost URL would resolve to that device, not this machine.
+const BASE = process.env.NEXT_PUBLIC_LEDGER_API || '/api/v2'
+
+// The portfolio every scoped call is made against. Held here rather than
+// threaded through each caller, and sent explicitly on the wire so the server
+// keeps no "current portfolio" state - two tabs on different books would
+// otherwise overwrite each other's idea of which is current.
+let activePortfolioId = null
+
+export function setActivePortfolio(id) {
+  activePortfolioId = id || null
+}
+
+export function getActivePortfolio() {
+  return activePortfolioId
+}
+
+function scoped(path) {
+  if (!activePortfolioId) return path
+  const separator = path.includes('?') ? '&' : '?'
+  return `${path}${separator}portfolioId=${encodeURIComponent(activePortfolioId)}`
+}
+
+async function request(path, options = {}) {
+  // A FormData body must set its own Content-Type: the browser appends the
+  // multipart boundary, and overriding it leaves the server unable to split
+  // the parts.
+  const isUpload = options.body instanceof FormData
+  const response = await fetch(`${BASE}${path}`, {
+    headers: isUpload ? undefined : { 'Content-Type': 'application/json' },
+    ...options,
+  })
+
+  if (response.status === 204) return null
+
+  const body = await response.json().catch(() => null)
+  if (!response.ok) {
+    // The API returns {error} for anything it rejected deliberately.
+    throw new Error(body?.error || `Request failed (${response.status})`)
+  }
+  return body
+}
+
+export const api = {
+  // Portfolio management. These are deliberately unscoped: they are how the
+  // caller discovers and changes which portfolio the rest operate on.
+  portfolios: () => request('/portfolios'),
+
+  createPortfolio: (name) =>
+    request('/portfolios', { method: 'POST', body: JSON.stringify({ name }) }),
+
+  renamePortfolio: (id, name) =>
+    request(`/portfolios/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  deletePortfolio: (id) => request(`/portfolios/${id}`, { method: 'DELETE' }),
+
+  portfolio: (includeArchived = false) =>
+    request(scoped(`/portfolio?includeArchived=${includeArchived}`)),
+
+  instruments: (includeArchived = false) =>
+    request(scoped(`/instruments?includeArchived=${includeArchived}`)),
+
+  addInstrument: (symbol, name) =>
+    request(scoped('/instruments'), {
+      method: 'POST',
+      body: JSON.stringify({ symbol, name }),
+    }),
+
+  archive: (id) =>
+    request(scoped(`/instruments/${id}/archive`), { method: 'POST' }),
+  unarchive: (id) =>
+    request(scoped(`/instruments/${id}/unarchive`), { method: 'POST' }),
+
+  transactions: (id) => request(scoped(`/instruments/${id}/transactions`)),
+
+  allTransactions: () => request(scoped('/transactions')),
+
+  recordTrade: (id, trade) =>
+    request(scoped(`/instruments/${id}/transactions`), {
+      method: 'POST',
+      body: JSON.stringify(trade),
+    }),
+
+  deleteTrade: (txnId) =>
+    request(scoped(`/transactions/${txnId}`), { method: 'DELETE' }),
+
+  refreshPrices: (force = false) =>
+    request(scoped('/prices/refresh'), {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    }),
+
+  syncDividends: () => request(scoped('/dividends/sync'), { method: 'POST' }),
+
+  syncCorporateActions: () =>
+    request(scoped('/corporate-actions/sync'), { method: 'POST' }),
+
+  dividends: (id) => request(scoped(`/instruments/${id}/dividends`)),
+
+  capitalGains: () => request(scoped('/capital-gains')),
+
+  priceAnomalies: () => request(scoped('/price-anomalies')),
+
+  previewImport: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    // Scoped on the query string: a multipart body has nowhere to put it.
+    return request(scoped('/imports/preview'), { method: 'POST', body: form })
+  },
+
+  applyImport: (rows) =>
+    request(scoped('/imports/apply'), {
+      method: 'POST',
+      body: JSON.stringify({ rows }),
+    }),
+}
