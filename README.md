@@ -267,7 +267,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Made with ❤️ by [D4T4R](https://github.com/D4T4R)
 
-<img width="1653" height="976" alt="image" src="https://github.com/user-attachments/assets/82d19693-b00c-4d49-9c5b-3ddf973fff29" />
+<!--img width="1653" height="976" alt="image" src="https://github.com/user-attachments/assets/82d19693-b00c-4d49-9c5b-3ddf973fff29"-->
 
 </div>
 
