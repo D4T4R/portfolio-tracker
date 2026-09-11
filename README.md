@@ -269,3 +269,50 @@ Made with ❤️ by [D4T4R](https://github.com/D4T4R)
 
 <img width="1653" height="976" alt="image" src="https://github.com/user-attachments/assets/82d19693-b00c-4d49-9c5b-3ddf973fff29" />
 
+</div>
+
+---
+
+## 📸 Screens
+
+> Every figure below comes from a generated demo book — twenty real NSE tickers
+> with invented quantities, prices and dates. Prices, dividends and splits are
+> live, so the arithmetic is real; the holdings are not anyone's.
+
+### Dashboard
+
+Positions sorted by value, with unrealised, realised and dividend income kept in
+separate columns. Total return is measured against every rupee ever deployed,
+not just the capital still in the market — which is why it exceeds the holdings
+figure beside it.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### One holding in full
+
+Holdings summary, P&L and portfolio weight on the left; live price, chart and
+the screener's read on the company down the right.
+
+The chart is TradingView's lightweight-charts rendering this book's own data
+rather than their embedded widget, which buys the one thing an iframe cannot do:
+**your actual buys and sells marked on the series**, with the average-cost line
+beside them. Markers are restated for splits, so a trade from before a 1:10 sits
+at the price the rest of the page quotes it at.
+
+![Stock detail](docs/screenshots/stock-detail.png)
+
+### Trade history
+
+The ledger itself. Positions are derived from these rows at read time and never
+stored, so there is no total that can drift away from the trades behind it.
+
+![Trade history](docs/screenshots/transactions.png)
+
+### Import
+
+Spreadsheets are parsed and shown for review before anything is written. A
+`Reference` column makes re-uploading the same sheet a no-op rather than a
+duplicate.
+
+![Import](docs/screenshots/import.png)
+
